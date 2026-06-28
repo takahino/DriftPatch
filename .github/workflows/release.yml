@@ -1,0 +1,123 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }} / ${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+          - os: linux
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+
+      - name: Install Linux GUI dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libssl-dev \
+            libegl-dev \
+            libwayland-dev
+
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }} --bins
+
+      - name: Prepare artifacts (Linux)
+        if: matrix.os == 'linux'
+        run: |
+          mkdir -p staging
+          cp target/${{ matrix.target }}/release/driftpatch staging/
+          cp target/${{ matrix.target }}/release/driftpatch-batch staging/
+          cp README.md README.jp.md staging/ 2>/dev/null || true
+          cd staging
+          tar czf ../driftpatch-${{ github.ref_name }}-${{ matrix.os }}-x86_64.tar.gz .
+
+      - name: Prepare artifacts (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path staging -Force | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/driftpatch.exe" staging/
+          Copy-Item "target/${{ matrix.target }}/release/driftpatch-batch.exe" staging/
+          Copy-Item README.md, README.jp.md staging/ -ErrorAction SilentlyContinue
+          Compress-Archive -Path staging/* -DestinationPath "driftpatch-${{ github.ref_name }}-${{ matrix.os }}-x86_64.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: driftpatch-${{ matrix.os }}-x86_64
+          path: |
+            driftpatch-${{ github.ref_name }}-${{ matrix.os }}-x86_64.tar.gz
+            driftpatch-${{ github.ref_name }}-${{ matrix.os }}-x86_64.zip
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lR artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
