@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use driftpatch::batch::{apply_all, BatchApplyConfig};
+use driftpatch::batch::{apply_all, import_from_commit, BatchApplyConfig, FromCommitConfig};
 
 #[derive(Parser)]
 #[command(name = "driftpatch-batch")]
@@ -24,6 +24,30 @@ enum Commands {
         /// レポート出力先ディレクトリ
         #[arg(long)]
         report_dir: PathBuf,
+    },
+    /// Git コミットから .dpatch を一括生成する
+    FromCommit {
+        /// Git リポジトリパス
+        #[arg(long)]
+        repo: PathBuf,
+        /// コミット SHA または ref
+        #[arg(long)]
+        commit: String,
+        /// target_file 相対化の基準ディレクトリ
+        #[arg(long)]
+        workdir: PathBuf,
+        /// パッチリポジトリルート（patches/ の親）
+        #[arg(long)]
+        patch_repo: PathBuf,
+        /// パッチ作者名
+        #[arg(long)]
+        author: Option<String>,
+        /// パッチ説明（未指定時はコミットメッセージ）
+        #[arg(long)]
+        description: Option<String>,
+        /// レポート出力先ディレクトリ（任意）
+        #[arg(long)]
+        report_dir: Option<PathBuf>,
     },
 }
 
@@ -55,6 +79,49 @@ fn main() {
                     println!("  HTML:  {}", outcome.html_path.display());
 
                     if outcome.report.summary.failed > 0 {
+                        std::process::exit(1);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("エラー: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::FromCommit {
+            repo,
+            commit,
+            workdir,
+            patch_repo,
+            author,
+            description,
+            report_dir,
+        } => {
+            let config = FromCommitConfig {
+                repo,
+                commit,
+                work_dir: workdir,
+                patch_repo,
+                author: author.unwrap_or_else(|| "unknown".to_string()),
+                description,
+                report_dir,
+            };
+
+            match import_from_commit(&config) {
+                Ok(outcome) => {
+                    println!("Git コミットからのパッチ生成完了");
+                    println!(
+                        "  保存: {} / スキップ: {} / 失敗: {}",
+                        outcome.saved, outcome.skipped, outcome.failed
+                    );
+                    if let Some(ref xlsx) = outcome.xlsx_path {
+                        println!("  Excel: {}", xlsx.display());
+                    }
+                    if let Some(ref html) = outcome.html_path {
+                        println!("  HTML:  {}", html.display());
+                    }
+
+                    if outcome.failed > 0 || outcome.skipped > 0 {
                         std::process::exit(1);
                     }
                 }

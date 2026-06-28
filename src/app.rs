@@ -1,6 +1,7 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use driftpatch::encoding::read_file_auto;
+use driftpatch::git_import::{generate_patches_from_commit, list_commits, CommitInfo};
 use driftpatch::lexer::profiles::detect_profile;
 use driftpatch::patch::context::ContextConfig;
 use driftpatch::patch::model::PatchFile;
@@ -17,6 +18,9 @@ pub struct Settings {
     pub username: String,
     /// パッチ相対パスの基準ディレクトリ
     pub work_dir: String,
+    /// Git リポジトリパス（空の場合は work_dir を使用）
+    #[serde(default)]
+    pub git_repo_path: String,
 }
 
 impl Default for Settings {
@@ -25,6 +29,7 @@ impl Default for Settings {
             patch_repo_path: String::new(),
             username: String::new(),
             work_dir: String::new(),
+            git_repo_path: String::new(),
         }
     }
 }
@@ -55,6 +60,18 @@ impl Settings {
             }
         }
     }
+}
+
+/// Git コミットからパッチ取り込みダイアログの状態
+#[derive(Debug, Default)]
+pub struct GitImportDialog {
+    pub commits: Vec<CommitInfo>,
+    pub selected: Option<usize>,
+    pub commit_input: String,
+    pub description: String,
+    pub result_message: Option<String>,
+    pub error: Option<String>,
+    pub loading: bool,
 }
 
 /// パッチ生成ダイアログの状態
@@ -93,6 +110,8 @@ pub struct DriftPatchApp {
     pub show_settings: bool,
     /// パッチ生成ダイアログ
     pub generate_patch_dialog: Option<GeneratePatchDialog>,
+    /// Git コミット取り込みダイアログ
+    pub git_import_dialog: Option<GitImportDialog>,
 }
 
 impl Default for DriftPatchApp {
@@ -112,6 +131,7 @@ impl Default for DriftPatchApp {
             status_message: "ファイルを開いてください".to_string(),
             show_settings: false,
             generate_patch_dialog: None,
+            git_import_dialog: None,
         }
     }
 }
@@ -333,6 +353,146 @@ impl DriftPatchApp {
             }
             Err(e) => {
                 self.status_message = format!("パッチ適用エラー: {}", e);
+            }
+        }
+    }
+
+    /// Git リポジトリパスを解決する（未設定時は work_dir）
+    pub fn resolve_git_repo_path(&self) -> Option<PathBuf> {
+        let path = self.settings.git_repo_path.trim();
+        if !path.is_empty() {
+            return Some(PathBuf::from(path));
+        }
+        let work = self.settings.work_dir.trim();
+        if work.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(work))
+        }
+    }
+
+    /// Git コミット取り込みダイアログを開く
+    pub fn open_git_import(&mut self) {
+        let Some(repo_path) = self.resolve_git_repo_path() else {
+            self.status_message =
+                "Git リポジトリパスまたは work_dir が設定されていません".to_string();
+            return;
+        };
+
+        match list_commits(&repo_path, 100) {
+            Ok(commits) => {
+                self.git_import_dialog = Some(GitImportDialog {
+                    commits,
+                    ..Default::default()
+                });
+            }
+            Err(e) => {
+                self.status_message = format!("Git 履歴読み込みエラー: {}", e);
+            }
+        }
+    }
+
+    /// 指定コミットからパッチを生成してリポジトリに保存する
+    pub fn import_from_commit(&mut self, commit_sha: &str, description: &str) {
+        let Some(repo_path) = self.resolve_git_repo_path() else {
+            if let Some(ref mut dialog) = self.git_import_dialog {
+                dialog.error =
+                    Some("Git リポジトリパスまたは work_dir が設定されていません".to_string());
+            }
+            return;
+        };
+
+        if self.settings.patch_repo_path.is_empty() {
+            if let Some(ref mut dialog) = self.git_import_dialog {
+                dialog.error = Some("パッチリポジトリパスが設定されていません".to_string());
+            }
+            return;
+        }
+
+        let work_dir = self.settings.work_dir.trim();
+        if work_dir.is_empty() {
+            if let Some(ref mut dialog) = self.git_import_dialog {
+                dialog.error = Some("work_dir が設定されていません".to_string());
+            }
+            return;
+        }
+
+        let config = ContextConfig::default();
+        let description_override = if description.trim().is_empty() {
+            None
+        } else {
+            Some(description.trim())
+        };
+
+        match generate_patches_from_commit(
+            &repo_path,
+            commit_sha,
+            Path::new(work_dir),
+            &self.settings.username,
+            description_override,
+            &config,
+        ) {
+            Ok(result) => {
+                let repo = PatchRepository::new(&self.settings.patch_repo_path);
+                let mut saved = 0usize;
+                let mut save_errors = Vec::new();
+
+                for item in &result.generated {
+                    match repo.save(&item.patch, &item.filename) {
+                        Ok(_) => saved += 1,
+                        Err(e) => save_errors.push(format!("{}: {}", item.target_file, e)),
+                    }
+                }
+
+                self.reload_patches();
+
+                let skipped_count = result.skipped.len();
+                let msg = if save_errors.is_empty() {
+                    format!(
+                        "Git 取り込み完了: {} 件保存, {} 件スキップ",
+                        saved, skipped_count
+                    )
+                } else {
+                    format!(
+                        "Git 取り込み: {} 件保存, {} 件スキップ, {} 件保存失敗",
+                        saved,
+                        skipped_count,
+                        save_errors.len()
+                    )
+                };
+                self.status_message = msg.clone();
+
+                if let Some(ref mut dialog) = self.git_import_dialog {
+                    dialog.error = None;
+                    let mut detail = msg;
+                    if !result.skipped.is_empty() {
+                        detail.push_str("\n\nスキップ:");
+                        for s in result.skipped.iter().take(10) {
+                            detail.push_str(&format!("\n  {} — {}", s.path, s.reason));
+                        }
+                        if result.skipped.len() > 10 {
+                            detail.push_str(&format!(
+                                "\n  ... 他 {} 件",
+                                result.skipped.len() - 10
+                            ));
+                        }
+                    }
+                    if !save_errors.is_empty() {
+                        detail.push_str("\n\n保存エラー:");
+                        for e in save_errors.iter().take(5) {
+                            detail.push_str(&format!("\n  {}", e));
+                        }
+                    }
+                    dialog.result_message = Some(detail);
+                    dialog.loading = false;
+                }
+            }
+            Err(e) => {
+                if let Some(ref mut dialog) = self.git_import_dialog {
+                    dialog.error = Some(e.to_string());
+                    dialog.loading = false;
+                }
+                self.status_message = format!("Git 取り込みエラー: {}", e);
             }
         }
     }

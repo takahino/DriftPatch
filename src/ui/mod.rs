@@ -1,5 +1,6 @@
 mod diff_editor;
 mod editors;
+mod git_import_window;
 mod patch_panel;
 mod settings_window;
 mod toolbar;
@@ -12,6 +13,9 @@ pub fn render(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
 
     // 設定ウィンドウ（フローティング、Context ベース）
     settings_window::render_settings_window(app, &ctx);
+
+    // Git コミット取り込みダイアログ
+    git_import_window::render_git_import_window(app, &ctx);
 
     // ツールバー（上部パネル）
     egui::Panel::top("toolbar")

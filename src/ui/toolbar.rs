@@ -18,6 +18,13 @@ pub fn render_toolbar(app: &mut DriftPatchApp, ctx: &Context, ui: &mut egui::Ui)
 
         ui.separator();
 
+        // Git コミットからパッチ生成
+        if ui.button("📜 Git コミットから取り込み").clicked() {
+            app.open_git_import();
+        }
+
+        ui.separator();
+
         // パッチ生成ボタン（ファイルが開かれている場合のみ有効）
         let can_generate = app.file_path.is_some();
         ui.add_enabled_ui(can_generate, |ui| {

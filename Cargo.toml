@@ -31,6 +31,7 @@ regex = "1"
 dirs = "6"
 clap = { version = "4", features = ["derive"] }
 rust_xlsxwriter = "0.79"
+git2 = { version = "0.19", default-features = false, features = ["vendored-libgit2"] }
 
 [profile.release]
 opt-level = 3

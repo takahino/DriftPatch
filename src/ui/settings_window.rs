@@ -37,6 +37,21 @@ pub fn render_settings_window(app: &mut DriftPatchApp, ctx: &egui::Context) {
                     });
                     ui.end_row();
 
+                    ui.label("Git リポジトリパス:");
+                    ui.horizontal(|ui| {
+                        ui.text_edit_singleline(&mut app.settings.git_repo_path);
+                        if ui.button("📂").clicked() {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .set_title("Git リポジトリフォルダを選択")
+                                .pick_folder()
+                            {
+                                app.settings.git_repo_path =
+                                    path.to_str().unwrap_or("").to_string();
+                            }
+                        }
+                    });
+                    ui.end_row();
+
                     ui.label("work ディレクトリ:");
                     ui.horizontal(|ui| {
                         ui.text_edit_singleline(&mut app.settings.work_dir);

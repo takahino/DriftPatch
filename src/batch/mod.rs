@@ -1,3 +1,4 @@
+mod from_commit;
 mod report;
 
 use std::path::{Path, PathBuf};
@@ -10,6 +11,7 @@ use crate::patch::applier::{apply_patch, ApplyError};
 use crate::patch::model::PatchFile;
 use crate::patch::repository::PatchRepository;
 
+pub use from_commit::{import_from_commit, FromCommitConfig, FromCommitOutcome};
 pub use report::{write_html_report, write_xlsx_report, BatchReport, ReportRow, ReportSummary};
 
 #[derive(Debug, Clone)]

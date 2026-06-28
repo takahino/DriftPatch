@@ -11,12 +11,14 @@
 - **Encoding support** — Automatic encoding detection on read; writes back in the original encoding
 - **Patch repository** — Organized storage under `patches/<target_file>/`
 - **Batch CLI** — Apply all patches at once with Excel and HTML reports
-- **No Git dependency** — File-based patch management only
+- **Git commit import** — Generate `.dpatch` files from a Git commit in bulk (read-only; no Git write operations)
+- **No Git write operations** — Does not commit, push, etc. Uses libgit2 for read-only history access
 
 ## Requirements
 
 - [Rust](https://www.rust-lang.org/) toolchain (edition 2021)
 - A desktop environment supported by eframe/egui (Windows, Linux with X11/Wayland)
+- [CMake](https://cmake.org/) when using Git commit import (required to build libgit2)
 
 On Windows, the GUI loads a Japanese font automatically from system fonts (Yu Gothic, MS Gothic, or Meiryo).
 
@@ -51,6 +53,7 @@ cargo run --release --bin driftpatch-batch -- apply \
 | **Username** | Author name recorded in generated patches |
 | **Patch repository path** | Root directory of the patch repo (contains a `patches/` folder) |
 | **Work directory** | Base directory for target files; paths in patches are relative to this |
+| **Git repository path** | For Git commit import; defaults to work directory if empty |
 
 4. Click **Save and close**.
 
@@ -78,6 +81,14 @@ flowchart LR
 4. **Preview** — Select a patch in the bottom panel. The right column shows the result of applying it to the original text.
 5. **Apply** — Click **Apply** to commit the selected patch to the original and editable text in memory.
 6. **Delete** — Click **Delete** to remove the selected patch file from the repository.
+
+### Import patches from a Git commit
+
+1. In **Settings**, configure **Git repository path** (defaults to work directory), **Work directory**, and **Patch repository path**.
+2. Click **Import from Git commit** in the toolbar.
+3. Select a commit from the list or enter a SHA / ref manually.
+4. Optionally override the description, then click **Generate**.
+5. A `.dpatch` is created for every changed file in the commit. Multiple edits in the same file are split into separate patch files per hunk (`-h1`, `-h2`, etc.).
 
 ### Three-column layout
 
@@ -128,6 +139,31 @@ Each row records patch path, target file, status (`success` / `failed`), error k
 
 Failed patches are logged in the report; processing continues for remaining patches.
 
+### Generate patches from a Git commit
+
+```bash
+driftpatch-batch from-commit \
+  --repo C:\project \
+  --commit abc1234 \
+  --workdir C:\project \
+  --patch-repo C:\project\patch-repo \
+  --author alice \
+  --description "REQ-123 fix null check" \
+  --report-dir C:\project\reports
+```
+
+| Option | Description |
+|--------|-------------|
+| `--repo` | Git repository path |
+| `--commit` | Commit SHA or ref |
+| `--workdir` | Base directory for `target_file` paths |
+| `--patch-repo` | Patch repository root (parent of `patches/`) |
+| `--author` | Patch author (optional) |
+| `--description` | Patch description (defaults to commit message) |
+| `--report-dir` | Report output directory (optional) |
+
+Multiple edits in the same file are split into separate `.dpatch` files per hunk.
+
 ## Patch Repository Layout
 
 ```
@@ -144,7 +180,7 @@ patch-repo/
 - Filenames follow `{YYYYMMDD}-{kebab-description}-{uuid8}.dpatch`.
 - Legacy flat layout (`patches/*.dpatch` at the top level) is also supported for reading.
 
-DriftPatch does **not** run Git commands; version control is your responsibility.
+DriftPatch does **not** perform Git write operations (commit, push, etc.). It uses libgit2 (`git2` crate) read-only for importing patches from commit history. Version control is your responsibility.
 
 ## `.dpatch` File Format
 

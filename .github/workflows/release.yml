@@ -38,6 +38,9 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Install cmake (for libgit2)
+        uses: lukka/get-cmake@latest
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
