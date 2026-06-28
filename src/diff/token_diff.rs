@@ -10,6 +10,7 @@ pub fn extract_significant(tokens: &[Token]) -> Vec<&Token> {
 /// 戻り値: (removed_indices_in_a, added_indices_in_b)
 ///   removed_indices_in_a: a の significant tokens のうち削除されたインデックス
 ///   added_indices_in_b  : b の significant tokens のうち追加されたインデックス
+#[allow(dead_code)]
 pub fn diff_significant(
     a_tokens: &[Token],
     b_tokens: &[Token],

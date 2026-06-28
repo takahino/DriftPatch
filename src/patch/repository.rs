@@ -7,6 +7,7 @@ use crate::patch::model::PatchFile;
 pub enum RepoError {
     Io(std::io::Error),
     Json(serde_json::Error),
+    #[allow(dead_code)]
     InvalidPath(String),
 }
 
@@ -100,6 +101,7 @@ impl PatchRepository {
     }
 
     /// 特定のファイルを読み込む
+    #[allow(dead_code)]
     pub fn load(&self, filename: &str) -> Result<PatchFile, RepoError> {
         let path = self.patches_dir().join(filename);
         let content = fs::read(&path)?;
@@ -113,7 +115,7 @@ impl PatchRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::patch::model::{DiffHunk, PatchFile};
+    use crate::patch::model::PatchFile;
 
     fn dummy_patch() -> PatchFile {
         PatchFile {

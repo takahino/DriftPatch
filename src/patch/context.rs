@@ -3,6 +3,7 @@ use crate::lexer::Token;
 /// コンテキスト拡張の設定
 pub struct ContextConfig {
     /// 最小コンテキストトークン数（significant tokens）
+    #[allow(dead_code)]
     pub min_context: usize,
     /// 最大コンテキストトークン数
     pub max_context: usize,
@@ -28,6 +29,7 @@ pub const CONTEXT_STEPS: &[usize] = &[5, 10, 20, 30];
 /// `change_start`: 変更開始インデックス（sig_tokens 内）
 /// `change_end`:   変更終了インデックス（sig_tokens 内、exclusive）
 /// `n`: コンテキストトークン数
+#[allow(dead_code)]
 pub fn collect_context(
     sig_tokens: &[&Token],
     change_start: usize,
@@ -51,6 +53,7 @@ pub fn collect_context(
 
 /// 与えられた context_before / context_after が `all_sig` の中でユニークにマッチするか確認する。
 /// 戻り値: マッチした位置のリスト（significant tokens 内のインデックス）
+#[allow(dead_code)]
 pub fn find_context_matches(
     all_sig: &[&Token],
     context_before: &[Token],
@@ -155,7 +158,8 @@ pub fn find_patch_matches(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lexer::{GenericTokenizer, profiles::JAVA, Token, TokenKind};
+    use crate::lexer::{GenericTokenizer, profiles::JAVA, Token};
+    use crate::lexer::token::TokenKind;
 
     fn tok(text: &str) -> Token {
         Token::new(TokenKind::Code, text)

@@ -7,4 +7,3 @@ pub mod repository;
 
 pub use applier::{apply_patch, ApplyError};
 pub use generator::{generate_patch, GeneratorError};
-pub use model::PatchFile;

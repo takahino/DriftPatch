@@ -28,6 +28,7 @@ pub struct Token {
 }
 
 impl Token {
+    #[allow(dead_code)]
     pub fn new(kind: TokenKind, text: impl Into<String>) -> Self {
         Self {
             kind,

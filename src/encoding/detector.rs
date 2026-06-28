@@ -24,6 +24,7 @@ pub fn decode_bytes(bytes: &[u8]) -> (String, String) {
 
 /// テキストを指定エンコーディングでバイト列に変換する。
 /// encoding_name が不明な場合は UTF-8 にフォールバックする。
+#[allow(dead_code)]
 pub fn encode_text(text: &str, encoding_name: &str) -> Vec<u8> {
     let encoding = Encoding::for_label(encoding_name.as_bytes())
         .unwrap_or(encoding_rs::UTF_8);
