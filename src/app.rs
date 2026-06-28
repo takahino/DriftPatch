@@ -15,6 +15,8 @@ pub struct Settings {
     pub patch_repo_path: String,
     /// パッチ生成時の作者名
     pub username: String,
+    /// パッチ相対パスの基準ディレクトリ
+    pub work_dir: String,
 }
 
 impl Default for Settings {
@@ -22,6 +24,7 @@ impl Default for Settings {
         Self {
             patch_repo_path: String::new(),
             username: String::new(),
+            work_dir: String::new(),
         }
     }
 }
@@ -158,6 +161,48 @@ impl DriftPatchApp {
         }
     }
 
+    /// work_dir 基準の相対パスを target_file 用文字列に変換する
+    fn target_file_relative(&self, file_path: &std::path::Path) -> Result<String, String> {
+        let work_dir = self.settings.work_dir.trim();
+        if work_dir.is_empty() {
+            return Err("work_dir が設定されていません（設定を確認してください）".to_string());
+        }
+        let work_path = std::path::Path::new(work_dir);
+        let rel = file_path.strip_prefix(work_path).map_err(|_| {
+            format!(
+                "対象ファイルが work_dir 配下にありません: {}",
+                file_path.display()
+            )
+        })?;
+        Ok(rel.to_str().unwrap_or("").replace('\\', "/"))
+    }
+
+    /// パッチの target_file から絶対パスを解決する
+    fn resolve_target_file(&self, patch: &PatchFile) -> Result<PathBuf, String> {
+        if self.settings.work_dir.trim().is_empty() {
+            return Err("work_dir が設定されていません".to_string());
+        }
+        if patch.target_file.is_empty() {
+            return Err("パッチに target_file がありません".to_string());
+        }
+        Ok(std::path::Path::new(&self.settings.work_dir).join(&patch.target_file))
+    }
+
+    /// パッチ対象ファイルが未オープンなら work_dir から自動で開く
+    fn ensure_target_file_open(&mut self, patch: &PatchFile) -> Result<(), String> {
+        let resolved = self.resolve_target_file(patch)?;
+        if self.file_path.as_ref() == Some(&resolved) {
+            return Ok(());
+        }
+        if !resolved.exists() {
+            return Err(format!("対象ファイルが見つかりません: {}", resolved.display()));
+        }
+        let idx = self.selected_patch;
+        self.open_file(resolved);
+        self.selected_patch = idx;
+        Ok(())
+    }
+
     /// 元テキストと編集テキストからパッチを生成して保存する
     pub fn generate_and_save_patch(&mut self, description: &str) -> Result<(), String> {
         let Some(ref file_path) = self.file_path.clone() else {
@@ -168,6 +213,7 @@ impl DriftPatchApp {
             return Err("パッチリポジトリパスが設定されていません（設定を確認してください）".to_string());
         }
 
+        let target_file = self.target_file_relative(file_path)?;
         let profile = detect_profile(file_path);
         let config = ContextConfig::default();
 
@@ -177,7 +223,7 @@ impl DriftPatchApp {
             profile,
             &self.settings.username,
             description,
-            file_path.to_str().unwrap_or(""),
+            &target_file,
             &self.encoding,
             &config,
         ) {
@@ -212,12 +258,18 @@ impl DriftPatchApp {
             return;
         };
 
+        let patch = patch.clone();
+        if let Err(e) = self.ensure_target_file_open(&patch) {
+            self.preview_text = String::new();
+            self.status_message = e;
+            return;
+        }
+
         let Some(ref file_path) = self.file_path.clone() else {
             return;
         };
 
         let profile = detect_profile(file_path);
-        let patch = patch.clone();
 
         match apply_patch(&self.original_text, &patch, profile) {
             Ok(result) => {
@@ -243,9 +295,14 @@ impl DriftPatchApp {
         let Some(idx) = self.selected_patch else { return; };
         let Some((_, patch)) = self.patches.get(idx) else { return; };
 
+        let patch = patch.clone();
+        if let Err(e) = self.ensure_target_file_open(&patch) {
+            self.status_message = e;
+            return;
+        }
+
         let Some(ref file_path) = self.file_path.clone() else { return; };
         let profile = detect_profile(file_path);
-        let patch = patch.clone();
 
         match apply_patch(&self.original_text, &patch, profile) {
             Ok(result) => {

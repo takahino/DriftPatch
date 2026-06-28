@@ -7,6 +7,7 @@ pub fn render_settings_window(app: &mut DriftPatchApp, ctx: &egui::Context) {
     }
 
     let mut open = app.show_settings;
+    let mut save_and_close = false;
 
     egui::Window::new("設定")
         .open(&mut open)
@@ -35,6 +36,21 @@ pub fn render_settings_window(app: &mut DriftPatchApp, ctx: &egui::Context) {
                         }
                     });
                     ui.end_row();
+
+                    ui.label("work ディレクトリ:");
+                    ui.horizontal(|ui| {
+                        ui.text_edit_singleline(&mut app.settings.work_dir);
+                        if ui.button("📂").clicked() {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .set_title("work ディレクトリを選択")
+                                .pick_folder()
+                            {
+                                app.settings.work_dir =
+                                    path.to_str().unwrap_or("").to_string();
+                            }
+                        }
+                    });
+                    ui.end_row();
                 });
 
             ui.separator();
@@ -42,9 +58,13 @@ pub fn render_settings_window(app: &mut DriftPatchApp, ctx: &egui::Context) {
             if ui.button("保存して閉じる").clicked() {
                 app.settings.save();
                 app.reload_patches();
-                app.show_settings = false;
+                save_and_close = true;
             }
         });
+
+    if save_and_close {
+        open = false;
+    }
 
     app.show_settings = open;
 }
