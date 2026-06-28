@@ -7,7 +7,7 @@
 ## 特徴
 
 - **GUI エディタ** — 3列レイアウト（修正前 / 編集画面 / プレビュー）
-- **トークン認識型パッチ** — Java、Python、C/C++、SQL、JavaScript/TypeScript および汎用プロファイルに対応
+- **トークン認識型パッチ** — Java、Python、C/C++、SQL、JavaScript/TypeScript、Rust、C#、Go、PL/SQL および汎用プロファイルに対応
 - **文字コード対応** — 読み込み時に自動検出、書き込み時は元のエンコーディングを維持
 - **パッチリポジトリ** — `patches/<target_file>/` 配下に整理して保存
 - **バッチ CLI** — 全パッチを一括適用し、Excel / HTML レポートを出力
@@ -248,6 +248,10 @@ DriftPatch は **Git 操作（commit/push 等）を行いません**。コミッ
 | C/C++ | `.c`, `.cpp`, `.cc`, `.cxx`, `.h`, `.hpp`, `.hxx`, `.rc` |
 | SQL | `.sql` |
 | JavaScript/TypeScript | `.js`, `.ts`, `.jsx`, `.tsx`, `.mjs`, `.cjs` |
+| Rust | `.rs` |
+| C# | `.cs`, `.csx` |
+| Go | `.go` |
+| PL/SQL | `.pls`, `.pks`, `.pkb`, `.pck`, `.psc`, `.plsql` |
 | Generic（汎用） | 上記以外の拡張子 |
 
 認識できない拡張子は汎用プロファイル（行コメント `//`、ブロックコメント `/* */`）が使われる。

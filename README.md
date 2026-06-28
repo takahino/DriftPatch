@@ -7,7 +7,7 @@
 ## Features
 
 - **GUI editor** — Three-column layout: original (read-only), editable working copy, and patch preview
-- **Token-aware patching** — Language profiles for Java, Python, C/C++, SQL, JavaScript/TypeScript, and a generic fallback
+- **Token-aware patching** — Language profiles for Java, Python, C/C++, SQL, JavaScript/TypeScript, Rust, C#, Go, PL/SQL, and a generic fallback
 - **Encoding support** — Automatic encoding detection on read; writes back in the original encoding
 - **Patch repository** — Organized storage under `patches/<target_file>/`
 - **Batch CLI** — Apply all patches at once with Excel and HTML reports
@@ -248,6 +248,10 @@ A `.dpatch` file is JSON with the following structure.
 | C/C++ | `.c`, `.cpp`, `.cc`, `.cxx`, `.h`, `.hpp`, `.hxx`, `.rc` |
 | SQL | `.sql` |
 | JavaScript/TypeScript | `.js`, `.ts`, `.jsx`, `.tsx`, `.mjs`, `.cjs` |
+| Rust | `.rs` |
+| C# | `.cs`, `.csx` |
+| Go | `.go` |
+| PL/SQL | `.pls`, `.pks`, `.pkb`, `.pck`, `.psc`, `.plsql` |
 | Generic | All other extensions |
 
 Unrecognized extensions use the generic profile (line comments `//`, block comments `/* */`).

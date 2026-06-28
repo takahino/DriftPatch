@@ -56,6 +56,42 @@ pub const JAVASCRIPT: LanguageProfile = LanguageProfile {
     triple_quote: false,
 };
 
+pub const RUST: LanguageProfile = LanguageProfile {
+    name: "rust",
+    extensions: &["rs"],
+    line_comment: Some("//"),
+    block_comment: Some(("/*", "*/")),
+    string_delimiters: &['"', '\''],
+    triple_quote: false,
+};
+
+pub const CSHARP: LanguageProfile = LanguageProfile {
+    name: "csharp",
+    extensions: &["cs", "csx"],
+    line_comment: Some("//"),
+    block_comment: Some(("/*", "*/")),
+    string_delimiters: &['"', '\''],
+    triple_quote: false,
+};
+
+pub const GO: LanguageProfile = LanguageProfile {
+    name: "go",
+    extensions: &["go"],
+    line_comment: Some("//"),
+    block_comment: Some(("/*", "*/")),
+    string_delimiters: &['"', '\'', '`'],
+    triple_quote: false,
+};
+
+pub const PLSQL: LanguageProfile = LanguageProfile {
+    name: "plsql",
+    extensions: &["pls", "pks", "pkb", "pck", "psc", "plsql"],
+    line_comment: Some("--"),
+    block_comment: Some(("/*", "*/")),
+    string_delimiters: &['\''],
+    triple_quote: false,
+};
+
 pub const GENERIC: LanguageProfile = LanguageProfile {
     name: "generic",
     extensions: &[],
@@ -71,6 +107,10 @@ pub const ALL_PROFILES: &[&LanguageProfile] = &[
     &CPP,
     &SQL,
     &JAVASCRIPT,
+    &RUST,
+    &CSHARP,
+    &GO,
+    &PLSQL,
 ];
 
 /// ファイルパスの拡張子からプロファイルを選択する。
@@ -106,6 +146,30 @@ mod tests {
     fn test_detect_python() {
         let p = detect_profile(&PathBuf::from("script.py"));
         assert_eq!(p.name, "python");
+    }
+
+    #[test]
+    fn test_detect_rust() {
+        let p = detect_profile(&PathBuf::from("main.rs"));
+        assert_eq!(p.name, "rust");
+    }
+
+    #[test]
+    fn test_detect_csharp() {
+        let p = detect_profile(&PathBuf::from("Program.cs"));
+        assert_eq!(p.name, "csharp");
+    }
+
+    #[test]
+    fn test_detect_go() {
+        let p = detect_profile(&PathBuf::from("main.go"));
+        assert_eq!(p.name, "go");
+    }
+
+    #[test]
+    fn test_detect_plsql() {
+        let p = detect_profile(&PathBuf::from("package.pks"));
+        assert_eq!(p.name, "plsql");
     }
 
     #[test]

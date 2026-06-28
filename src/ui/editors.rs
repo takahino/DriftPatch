@@ -104,7 +104,7 @@ pub fn render_editors(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
 fn lang_to_syntax(lang: &str) -> Syntax {
     match lang {
         "python" => Syntax::python(),
-        "sql" => Syntax::sql(),
+        "sql" | "plsql" => Syntax::sql(),
         _ => Syntax::rust(),
     }
 }
