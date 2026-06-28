@@ -1,7 +1,7 @@
 use similar::{ChangeTag, TextDiff};
 use crate::lexer::Token;
 
-/// significant tokens（CODE + STRING_LITERAL）のみを取り出す
+/// significant tokens（CODE + STRING_LITERAL + コメント）のみを取り出す
 pub fn extract_significant(tokens: &[Token]) -> Vec<&Token> {
     tokens.iter().filter(|t| t.is_significant()).collect()
 }
@@ -77,7 +77,7 @@ pub enum DiffTag {
     Delete,
 }
 
-/// significant tokens のシンプルな Myers diff
+/// significant tokens（CODE + STRING_LITERAL + コメント）のシンプルな Myers diff
 pub fn diff_tokens(a_tokens: &[Token], b_tokens: &[Token]) -> Vec<DiffOp> {
     let a_sig: Vec<&Token> = extract_significant(a_tokens);
     let b_sig: Vec<&Token> = extract_significant(b_tokens);

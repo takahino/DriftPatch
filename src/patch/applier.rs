@@ -314,4 +314,28 @@ mod tests {
             })
         ));
     }
+
+    #[test]
+    fn test_apply_patch_comment_rewrite_after_semicolon() {
+        // return と ; の間（以降）のコメントを含む範囲のコード+コメント書き換え
+        let orig = "int x = 1; // old\n";
+        let edit = "int x = 2; // new\n";
+        let config = ContextConfig::default();
+        let patch = generate_patch(orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config).unwrap();
+
+        let result = apply_patch(orig, &patch, &JAVA).unwrap();
+        assert_eq!(result, edit);
+    }
+
+    #[test]
+    fn test_apply_patch_comment_removal_between_tokens() {
+        // return と null の間のブロックコメントを削除
+        let orig = "return /* c */ null;\n";
+        let edit = "return null;\n";
+        let config = ContextConfig::default();
+        let patch = generate_patch(orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config).unwrap();
+
+        let result = apply_patch(orig, &patch, &JAVA).unwrap();
+        assert_eq!(result, edit);
+    }
 }

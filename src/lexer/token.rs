@@ -12,9 +12,16 @@ pub enum TokenKind {
 }
 
 impl TokenKind {
-    /// パッチマッチング時に意味のあるトークンか（空白・コメントを除く）
+    /// パッチマッチング時に意味のあるトークンか（空白を除く）
+    /// コメント（LINE_COMMENT / BLOCK_COMMENT）も書き換え対象とするため意味ありとみなす。
     pub fn is_significant(&self) -> bool {
-        matches!(self, TokenKind::Code | TokenKind::StringLiteral)
+        matches!(
+            self,
+            TokenKind::Code
+                | TokenKind::StringLiteral
+                | TokenKind::LineComment
+                | TokenKind::BlockComment
+        )
     }
 }
 
@@ -64,7 +71,7 @@ mod tests {
         assert!(Token::new(TokenKind::StringLiteral, "\"bar\"").is_significant());
         assert!(!Token::new(TokenKind::Whitespace, " ").is_significant());
         assert!(!Token::new(TokenKind::Newline, "\n").is_significant());
-        assert!(!Token::new(TokenKind::LineComment, "// x").is_significant());
-        assert!(!Token::new(TokenKind::BlockComment, "/* x */").is_significant());
+        assert!(Token::new(TokenKind::LineComment, "// x").is_significant());
+        assert!(Token::new(TokenKind::BlockComment, "/* x */").is_significant());
     }
 }

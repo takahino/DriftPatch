@@ -74,6 +74,19 @@ pub fn generate_patch(
         let change_start = raw.orig_start;
         let change_end = raw.orig_end;
 
+        // 隣接ハンクの変更範囲にはみ出さないようコンテキスト境界をクランプする。
+        // はみ出したトークンは別ハンクの適用で変化するため、逐次適用時にマッチしなくなる。
+        let prev_end = if hunk_idx == 0 {
+            0
+        } else {
+            hunks_raw[hunk_idx - 1].orig_end
+        };
+        let next_start = if hunk_idx + 1 == hunks_raw.len() {
+            orig_sig.len()
+        } else {
+            hunks_raw[hunk_idx + 1].orig_start
+        };
+
         // コンテキストを段階的に拡張し、最小マッチ数を与えるコンテキストを選ぶ
         let mut found_hunk: Option<DiffHunk> = None;
         let mut best_match_count = usize::MAX;
@@ -83,8 +96,8 @@ pub fn generate_patch(
                 break;
             }
 
-            let before_start = change_start.saturating_sub(ctx_size);
-            let after_end = (change_end + ctx_size).min(orig_sig.len());
+            let before_start = change_start.saturating_sub(ctx_size).max(prev_end);
+            let after_end = (change_end + ctx_size).min(next_start);
 
             let ctx_before: Vec<Token> = orig_sig[before_start..change_start]
                 .iter()
@@ -318,5 +331,41 @@ mod tests {
         // 2つのハンクに分かれるか、1ハンクで count=2 になるかは diff のグルーピング次第
         let total_count: usize = patch.hunks.iter().map(|h| h.count).sum();
         assert_eq!(total_count, 2, "2箇所の変更がカバーされること");
+    }
+
+    #[test]
+    fn test_generate_patch_comment_only_change() {
+        // コメントのみの変更がパッチ化されること（従来は NoDiff になっていた）
+        let orig = "int x = 1; // old\n";
+        let edit = "int x = 1; // new\n";
+        let config = ContextConfig::default();
+        let result = generate_patch(orig, edit, &JAVA, "tester", "テスト", "Foo.java", "UTF-8", &config);
+        assert!(result.is_ok(), "コメント変更のパッチ生成失敗: {:?}", result);
+        let patch = result.unwrap();
+        assert!(!patch.hunks.is_empty());
+        // いずれかのハンクの added_text に新しいコメントが、removed に旧コメントが含まれること
+        let added_has_new = patch.hunks.iter().any(|h| h.added_text.contains("// new"));
+        let removed_has_old = patch
+            .hunks
+            .iter()
+            .any(|h| h.removed.iter().any(|t| t.text.contains("// old")));
+        assert!(added_has_new, "added_text に // new が含まれること: {:?}", patch.hunks);
+        assert!(removed_has_old, "removed に // old が含まれること: {:?}", patch.hunks);
+    }
+
+    #[test]
+    fn test_generate_patch_comment_removal() {
+        // return と null の間のブロックコメント削除がパッチ化されること
+        let orig = "return /* c */ null;\n";
+        let edit = "return null;\n";
+        let config = ContextConfig::default();
+        let result = generate_patch(orig, edit, &JAVA, "tester", "テスト", "Foo.java", "UTF-8", &config);
+        assert!(result.is_ok(), "コメント削除のパッチ生成失敗: {:?}", result);
+        let patch = result.unwrap();
+        let removed_has_comment = patch
+            .hunks
+            .iter()
+            .any(|h| h.removed.iter().any(|t| t.text.contains("/* c */")));
+        assert!(removed_has_comment, "removed にブロックコメントが含まれること: {:?}", patch.hunks);
     }
 }

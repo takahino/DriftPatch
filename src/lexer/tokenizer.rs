@@ -290,9 +290,9 @@ mod tests {
     #[test]
     fn test_tokenize_ignores_whitespace_in_significant() {
         let tokenizer = GenericTokenizer::new(&JAVA);
-        // コメントや空白が混在しても meaningful tokens は同じ
+        // 空白が混在しても meaningful tokens は同じ
         let tokens1 = tokenizer.tokenize("int x=1;");
-        let tokens2 = tokenizer.tokenize("int  x  =  1 ; // ignored");
+        let tokens2 = tokenizer.tokenize("int  x  =  1 ;");
         let sig1: Vec<&str> = tokens1.iter().filter(|t| t.is_significant()).map(|t| t.text.as_str()).collect();
         let sig2: Vec<&str> = tokens2.iter().filter(|t| t.is_significant()).map(|t| t.text.as_str()).collect();
         assert_eq!(sig1, sig2);
