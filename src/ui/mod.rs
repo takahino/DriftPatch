@@ -1,3 +1,4 @@
+mod diff_editor;
 mod editors;
 mod patch_panel;
 mod settings_window;
