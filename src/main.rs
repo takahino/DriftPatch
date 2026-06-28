@@ -1,8 +1,4 @@
 mod app;
-mod diff;
-mod encoding;
-mod lexer;
-mod patch;
 mod ui;
 
 use app::DriftPatchApp;
@@ -20,7 +16,6 @@ fn main() -> eframe::Result<()> {
         "DriftPatch",
         native_options,
         Box::new(|cc| {
-            // 日本語フォントをロード
             setup_fonts(&cc.egui_ctx);
             Ok(Box::new(DriftPatchApp::default()))
         }),
@@ -28,7 +23,6 @@ fn main() -> eframe::Result<()> {
 }
 
 /// 日本語フォントを egui に登録する。
-/// Windows の日本語フォントを試み、見つかれば Proportional/Monospace に追加する。
 fn setup_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 

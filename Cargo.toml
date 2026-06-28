@@ -3,6 +3,18 @@ name = "driftpatch"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "driftpatch"
+path = "src/main.rs"
+
+[[bin]]
+name = "driftpatch-batch"
+path = "src/bin/driftpatch-batch.rs"
+
+[lib]
+name = "driftpatch"
+path = "src/lib.rs"
+
 [dependencies]
 eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts", "x11", "wayland", "accesskit"] }
 egui = "0.35"
@@ -17,6 +29,8 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
 dirs = "6"
+clap = { version = "4", features = ["derive"] }
+rust_xlsxwriter = "0.79"
 
 [profile.release]
 opt-level = 3

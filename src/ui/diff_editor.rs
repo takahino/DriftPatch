@@ -1,4 +1,4 @@
-use crate::diff::line_diff::overlaps_range;
+use driftpatch::diff::line_diff::overlaps_range;
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, TextBuffer};
 use egui_code_editor::{format_token, ColorTheme, Syntax, Token, TokenType};

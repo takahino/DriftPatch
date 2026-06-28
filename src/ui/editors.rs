@@ -1,5 +1,5 @@
 use crate::app::DriftPatchApp;
-use crate::diff::inline_diff;
+use driftpatch::diff::inline_diff;
 use egui_code_editor::{ColorTheme, Syntax};
 
 use super::diff_editor;

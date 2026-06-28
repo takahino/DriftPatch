@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
-use crate::encoding::read_file_auto;
-use crate::lexer::profiles::detect_profile;
-use crate::patch::context::ContextConfig;
-use crate::patch::model::PatchFile;
-use crate::patch::name_gen::generate_filename;
-use crate::patch::repository::PatchRepository;
-use crate::patch::{apply_patch, generate_patch, ApplyError, GeneratorError};
+use driftpatch::encoding::read_file_auto;
+use driftpatch::lexer::profiles::detect_profile;
+use driftpatch::patch::context::ContextConfig;
+use driftpatch::patch::model::PatchFile;
+use driftpatch::patch::name_gen::generate_filename;
+use driftpatch::patch::repository::PatchRepository;
+use driftpatch::patch::{apply_patch, generate_patch, ApplyError, GeneratorError};
 
 /// 永続化する設定
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -81,10 +81,10 @@ pub struct DriftPatchApp {
     pub language: &'static str,
     /// 現在の文字コード
     pub encoding: String,
-    /// パッチ一覧
+    /// パッチ一覧（patches/ からの相対パス, パッチ本体）
     pub patches: Vec<(String, PatchFile)>,
-    /// 選択中のパッチインデックス
-    pub selected_patch: Option<usize>,
+    /// 選択中のパッチ（patches/ からの相対パス）
+    pub selected_patch: Option<String>,
     /// 設定
     pub settings: Settings,
     /// ステータスバーメッセージ
@@ -130,7 +130,6 @@ impl DriftPatchApp {
                 self.file_path = Some(path.clone());
                 self.selected_patch = None;
 
-                // パッチ一覧を更新
                 self.reload_patches();
 
                 let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
@@ -154,11 +153,43 @@ impl DriftPatchApp {
         match repo.list() {
             Ok(list) => {
                 self.patches = list;
+                if let Some(ref selected) = self.selected_patch {
+                    if !self.patches.iter().any(|(p, _)| p == selected) {
+                        self.selected_patch = None;
+                        self.preview_text = String::new();
+                    }
+                }
             }
             Err(e) => {
                 self.status_message = format!("パッチ一覧読み込みエラー: {}", e);
             }
         }
+    }
+
+    /// 開いているファイル向けのパッチだけを返す
+    pub fn patches_for_open_file(&self) -> Vec<(String, PatchFile)> {
+        let Some(ref rel) = self.open_file_relative() else {
+            return Vec::new();
+        };
+        self.patches
+            .iter()
+            .filter(|(_, patch)| patch.target_file == *rel)
+            .cloned()
+            .collect()
+    }
+
+    /// 開いているファイルの work_dir 相対パス（`/` 区切り）
+    pub fn open_file_relative(&self) -> Option<String> {
+        let file_path = self.file_path.as_ref()?;
+        self.target_file_relative(file_path).ok()
+    }
+
+    /// パッチ相対パスからパッチ本体を取得する
+    fn patch_by_path(&self, patch_path: &str) -> Option<&PatchFile> {
+        self.patches
+            .iter()
+            .find(|(p, _)| p == patch_path)
+            .map(|(_, patch)| patch)
     }
 
     /// work_dir 基準の相対パスを target_file 用文字列に変換する
@@ -186,21 +217,6 @@ impl DriftPatchApp {
             return Err("パッチに target_file がありません".to_string());
         }
         Ok(std::path::Path::new(&self.settings.work_dir).join(&patch.target_file))
-    }
-
-    /// パッチ対象ファイルが未オープンなら work_dir から自動で開く
-    fn ensure_target_file_open(&mut self, patch: &PatchFile) -> Result<(), String> {
-        let resolved = self.resolve_target_file(patch)?;
-        if self.file_path.as_ref() == Some(&resolved) {
-            return Ok(());
-        }
-        if !resolved.exists() {
-            return Err(format!("対象ファイルが見つかりません: {}", resolved.display()));
-        }
-        let idx = self.selected_patch;
-        self.open_file(resolved);
-        self.selected_patch = idx;
-        Ok(())
     }
 
     /// 元テキストと編集テキストからパッチを生成して保存する
@@ -249,25 +265,24 @@ impl DriftPatchApp {
 
     /// 選択中のパッチを元テキストに適用してプレビューを更新する
     pub fn update_preview(&mut self) {
-        let Some(idx) = self.selected_patch else {
+        let Some(ref patch_path) = self.selected_patch.clone() else {
             self.preview_text = String::new();
             return;
         };
-        let Some((_, patch)) = self.patches.get(idx) else {
+        let Some(patch) = self.patch_by_path(patch_path).cloned() else {
             self.preview_text = String::new();
             return;
         };
-
-        let patch = patch.clone();
-        if let Err(e) = self.ensure_target_file_open(&patch) {
-            self.preview_text = String::new();
-            self.status_message = e;
-            return;
-        }
 
         let Some(ref file_path) = self.file_path.clone() else {
             return;
         };
+
+        if self.resolve_target_file(&patch).ok().as_ref() != Some(file_path) {
+            self.preview_text = String::new();
+            self.status_message = "選択したパッチは現在開いているファイル向けではありません".to_string();
+            return;
+        }
 
         let profile = detect_profile(file_path);
 
@@ -278,9 +293,14 @@ impl DriftPatchApp {
             }
             Err(ApplyError::NoMatch { hunk_index }) => {
                 self.preview_text = String::new();
-                self.status_message = format!("適用失敗: ハンク {} の対象箇所が見つかりません", hunk_index);
+                self.status_message =
+                    format!("適用失敗: ハンク {} の対象箇所が見つかりません", hunk_index);
             }
-            Err(ApplyError::AmbiguousMatch { hunk_index, match_count, .. }) => {
+            Err(ApplyError::AmbiguousMatch {
+                hunk_index,
+                match_count,
+                ..
+            }) => {
                 self.preview_text = String::new();
                 self.status_message = format!(
                     "適用失敗: ハンク {} が {} 箇所にマッチします。手動確認が必要です。",
@@ -292,16 +312,16 @@ impl DriftPatchApp {
 
     /// 選択中のパッチを元テキストに適用して original_text と edited_text を更新する
     pub fn apply_selected_patch(&mut self) {
-        let Some(idx) = self.selected_patch else { return; };
-        let Some((_, patch)) = self.patches.get(idx) else { return; };
-
-        let patch = patch.clone();
-        if let Err(e) = self.ensure_target_file_open(&patch) {
-            self.status_message = e;
+        let Some(ref patch_path) = self.selected_patch.clone() else {
             return;
-        }
+        };
+        let Some(patch) = self.patch_by_path(patch_path).cloned() else {
+            return;
+        };
 
-        let Some(ref file_path) = self.file_path.clone() else { return; };
+        let Some(ref file_path) = self.file_path.clone() else {
+            return;
+        };
         let profile = detect_profile(file_path);
 
         match apply_patch(&self.original_text, &patch, profile) {
@@ -319,17 +339,20 @@ impl DriftPatchApp {
 
     /// 選択中のパッチを削除する
     pub fn delete_selected_patch(&mut self) {
-        let Some(idx) = self.selected_patch else { return; };
-        let Some((filename, _)) = self.patches.get(idx) else { return; };
-        let filename = filename.clone();
+        let Some(ref patch_path) = self.selected_patch.clone() else {
+            return;
+        };
+        let patch_path = patch_path.clone();
 
-        if self.settings.patch_repo_path.is_empty() { return; }
+        if self.settings.patch_repo_path.is_empty() {
+            return;
+        }
         let repo = PatchRepository::new(&self.settings.patch_repo_path);
-        match repo.delete(&filename) {
+        match repo.delete(&patch_path) {
             Ok(()) => {
                 self.selected_patch = None;
                 self.preview_text = String::new();
-                self.status_message = format!("削除: {}", filename);
+                self.status_message = format!("削除: {}", patch_path);
                 self.reload_patches();
             }
             Err(e) => {
@@ -342,5 +365,45 @@ impl DriftPatchApp {
 impl eframe::App for DriftPatchApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         crate::ui::render(self, ui);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_patch(target_file: &str) -> PatchFile {
+        PatchFile {
+            version: "1".to_string(),
+            id: "test-id".to_string(),
+            author: "test".to_string(),
+            created_at: "2026-06-28T10:00:00+0900".to_string(),
+            description: "desc".to_string(),
+            target_file: target_file.to_string(),
+            language: "java".to_string(),
+            encoding: "UTF-8".to_string(),
+            hunks: vec![],
+        }
+    }
+
+    #[test]
+    fn test_patches_for_open_file_filters_by_target_file() {
+        let mut app = DriftPatchApp::default();
+        app.settings.work_dir = std::env::temp_dir().to_string_lossy().into_owned();
+        app.file_path = Some(std::path::Path::new(&app.settings.work_dir).join("src/Foo.java"));
+        app.patches = vec![
+            (
+                "src/Foo.java/a.dpatch".to_string(),
+                dummy_patch("src/Foo.java"),
+            ),
+            (
+                "src/Bar.java/b.dpatch".to_string(),
+                dummy_patch("src/Bar.java"),
+            ),
+        ];
+
+        let filtered = app.patches_for_open_file();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, "src/Foo.java/a.dpatch");
     }
 }

@@ -1,2 +1,2 @@
 pub mod detector;
-pub use detector::read_file_auto;
+pub use detector::{encode_text, read_file_auto};
