@@ -170,6 +170,8 @@ mod tests {
     fn test_detect_plsql() {
         let p = detect_profile(&PathBuf::from("package.pks"));
         assert_eq!(p.name, "plsql");
+        let p2 = detect_profile(&PathBuf::from("spec.plsql"));
+        assert_eq!(p2.name, "plsql");
     }
 
     #[test]
