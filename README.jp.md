@@ -1,0 +1,235 @@
+# DriftPatch
+
+**DriftPatch** は、ソースコードの変更をパッチ（`.dpatch`）として生成・管理・適用するデスクトップツールです。変更前後のテキストからトークン認識型の JSON パッチを作成し、パッチリポジトリに保存して、GUI または CLI で対象ファイルに適用できます。
+
+> English documentation: [README.md](README.md)
+
+## 特徴
+
+- **GUI エディタ** — 3列レイアウト（修正前 / 編集画面 / プレビュー）
+- **トークン認識型パッチ** — Java、Python、C/C++、SQL、JavaScript/TypeScript および汎用プロファイルに対応
+- **文字コード対応** — 読み込み時に自動検出、書き込み時は元のエンコーディングを維持
+- **パッチリポジトリ** — `patches/<target_file>/` 配下に整理して保存
+- **バッチ CLI** — 全パッチを一括適用し、Excel / HTML レポートを出力
+- **Git 非依存** — ファイルベースのパッチ管理のみ（Git コマンドは実行しない）
+
+## 必要環境
+
+- [Rust](https://www.rust-lang.org/) ツールチェーン（edition 2021）
+- eframe/egui が動作するデスクトップ環境（Windows、X11/Wayland 対応 Linux）
+
+Windows では、システムフォント（游ゴシック、MS ゴシック、メイリオ）から日本語フォントを自動読み込みします。
+
+## ビルドと実行
+
+```bash
+# 両バイナリをビルド（release）
+cargo build --release
+
+# GUI
+cargo run --release
+# または
+./target/release/driftpatch
+
+# バッチ CLI
+cargo run --release --bin driftpatch-batch -- apply \
+  --workdir /path/to/project \
+  --patch-dir /path/to/repo/patches \
+  --report-dir /path/to/reports
+```
+
+## GUI の使い方
+
+### 初回設定
+
+1. `driftpatch` を起動する。
+2. **設定**（歯車ボタン）をクリックする。
+3. 以下を設定する:
+
+| 設定項目 | 説明 |
+|----------|------|
+| **ユーザー名** | 生成するパッチに記録される作者名 |
+| **パッチリポジトリパス** | パッチリポジトリのルート（`patches/` フォルダを含む） |
+| **work ディレクトリ** | 対象ファイルの基準ディレクトリ。パッチ内のパスはここからの相対パス |
+
+4. **保存して閉じる** をクリックする。
+
+設定は次の場所に保存されます:
+
+- **Windows:** `%APPDATA%\DriftPatch\settings.json`
+- **Linux:** `~/.local/share/DriftPatch/settings.json`
+- **macOS:** `~/Library/Application Support/DriftPatch/settings.json`
+
+### 基本的なワークフロー
+
+```mermaid
+flowchart LR
+    openFile[ファイルを開く] --> edit[中央列で編集]
+    edit --> generate[パッチ生成]
+    generate --> save[patches に保存]
+    save --> select[一覧で選択]
+    select --> preview[右列でプレビュー]
+    preview --> apply[適用]
+```
+
+1. **ファイルを開く** — **ファイルを開く** をクリックし、`work_dir` 配下のソースファイルを選択する。
+2. **編集** — 中央列（**修正画面**）でテキストを編集する。左列は修正前の原文、削除箇所は赤、追加箇所は緑でハイライトされる。
+3. **パッチ生成** — **パッチ生成...** をクリックし、説明（要件番号など）を入力して **生成** を押す。パッチは `patches/<target_file>/<id>.dpatch` に保存される。
+4. **プレビュー** — 下部パネルでパッチを選択する。右列に、原文へ適用した結果が表示される。
+5. **適用** — **適用** をクリックすると、選択したパッチがメモリ上の原文・編集テキストに反映される。
+6. **削除** — **削除** をクリックすると、選択したパッチファイルがリポジトリから削除される。
+
+### 3列レイアウト
+
+| 列 | ラベル | 用途 |
+|----|--------|------|
+| 左 | 修正前（読取専用） | 変更前のベースライン |
+| 中央 | 修正画面（編集可） | パッチ作成用の作業コピー |
+| 右 | パッチ適用プレビュー（読取専用） | 選択パッチの適用結果 |
+
+左列・右列は中央列のスクロールに連動する。
+
+### パッチ一覧パネル
+
+下部パネルには、現在開いているファイルの `target_file` に一致するパッチのみ表示される。**更新** でディスクから再読み込みできる。
+
+## バッチ CLI の使い方
+
+`driftpatch-batch` は `--patch-dir` 以下の全 `.dpatch` を `--workdir` 内のファイルへ順次適用する。
+
+```bash
+driftpatch-batch apply \
+  --workdir C:\project\src \
+  --patch-dir C:\project\patch-repo\patches \
+  --report-dir C:\project\reports
+```
+
+| オプション | 説明 |
+|------------|------|
+| `--workdir` | 修正対象ファイルを含むワークディレクトリ |
+| `--patch-dir` | `.dpatch` が格納されたディレクトリ（通常は `patches/` またはリポジトリルート） |
+| `--report-dir` | Excel / HTML レポートの出力先 |
+
+### レポート
+
+実行後、`--report-dir` に次の2ファイルが生成される:
+
+- `driftpatch-report-YYYYMMDD-HHMMSS.xlsx`
+- `driftpatch-report-YYYYMMDD-HHMMSS.html`
+
+各行にはパッチパス、対象ファイル、ステータス（`success` / `failed`）、エラー種別、タイムスタンプが記録される。
+
+### 終了コード
+
+| コード | 意味 |
+|--------|------|
+| `0` | 全パッチの適用に成功 |
+| `1` | 1件以上のパッチが失敗、または致命的エラー |
+
+失敗したパッチはレポートに記録され、残りのパッチ処理は継続される。
+
+## パッチリポジトリの構成
+
+```
+patch-repo/
+└── patches/
+    └── src/
+        └── Foo.java/
+            ├── 20260628-fix-null-check-a1b2c3d4.dpatch
+            └── 20260629-add-logging-e5f6g7h8.dpatch
+```
+
+- 各パッチは `patches/<target_file>/<filename>.dpatch` に配置される。
+- `target_file` は `work_dir` からの相対パス（`/` 区切り。例: `src/Foo.java`）。
+- ファイル名は `{YYYYMMDD}-{kebab-description}-{uuid8}.dpatch` 形式。
+- 旧形式のフラット配置（`patches/*.dpatch` を直下に置く）も読み込み可能。
+
+DriftPatch は **Git コマンドを実行しません**。バージョン管理は利用者側で行ってください。
+
+## `.dpatch` ファイル形式
+
+`.dpatch` は JSON 形式。構造は以下のとおり。
+
+### `PatchFile`（ルート）
+
+| フィールド | 型 | 説明 |
+|------------|-----|------|
+| `version` | string | フォーマットバージョン（現在は `"1"`） |
+| `id` | string | 一意のパッチ ID（`YYYYMMDD-kebab-uuid8`） |
+| `author` | string | 設定のユーザー名 |
+| `created_at` | string | 作成日時（ISO 8601） |
+| `description` | string | 人間が読める説明 |
+| `target_file` | string | `work_dir` からの相対パス（`/` 区切り） |
+| `language` | string | 言語プロファイル名（例: `java`, `python`） |
+| `encoding` | string | ファイルのエンコーディング（例: `UTF-8`） |
+| `hunks` | array | 差分ハンクの配列 |
+
+### `DiffHunk`
+
+| フィールド | 型 | 説明 |
+|------------|-----|------|
+| `context_before` | Token[] | 変更箇所直前の意味のあるトークン |
+| `removed` | Token[] | 削除されるトークン |
+| `added_text` | string | 置換文字列（編集後ソースからそのまま抽出） |
+| `context_after` | Token[] | 変更箇所直後の意味のあるトークン |
+
+### `Token`
+
+| フィールド | 型 | 説明 |
+|------------|-----|------|
+| `kind` | string | `CODE`, `STRING_LITERAL`, `LINE_COMMENT`, `BLOCK_COMMENT`, `NEWLINE`, `WHITESPACE` のいずれか |
+| `text` | string | トークンのテキスト |
+
+### 例
+
+```json
+{
+  "version": "1",
+  "id": "20260628-fix-null-check-a1b2c3d4",
+  "author": "alice",
+  "created_at": "2026-06-28T10:00:00+0900",
+  "description": "fix null check",
+  "target_file": "src/Foo.java",
+  "language": "java",
+  "encoding": "UTF-8",
+  "hunks": [
+    {
+      "context_before": [],
+      "removed": [],
+      "added_text": "    Objects.requireNonNull(bar);\n",
+      "context_after": []
+    }
+  ]
+}
+```
+
+## 対応言語プロファイル
+
+| プロファイル | 拡張子 |
+|--------------|--------|
+| Java | `.java` |
+| Python | `.py` |
+| C/C++ | `.c`, `.cpp`, `.cc`, `.cxx`, `.h`, `.hpp`, `.hxx`, `.rc` |
+| SQL | `.sql` |
+| JavaScript/TypeScript | `.js`, `.ts`, `.jsx`, `.tsx`, `.mjs`, `.cjs` |
+| Generic（汎用） | 上記以外の拡張子 |
+
+認識できない拡張子は汎用プロファイル（行コメント `//`、ブロックコメント `/* */`）が使われる。
+
+## トラブルシューティング
+
+| 問題 | 原因 / 対処 |
+|------|-------------|
+| **パッチリポジトリパスが設定されていない** | **設定** からパッチリポジトリパスを指定する |
+| **work_dir が設定されていない** | **設定** から work ディレクトリを指定する |
+| **開いているファイルが work_dir 配下にない** | 対象ファイルは設定した work ディレクトリ内にある必要がある |
+| **変更が見つかりませんでした** | 原文と編集テキストが同一 |
+| **ハンクが一意でない（生成時）** | 変更パターンが複数箇所にマッチ。前後のコードを含めて編集範囲を広げる |
+| **ハンクが見つからない（適用時）** | 対象ソースが変化している。パッチを再生成するか手動で修正する |
+| **曖昧なマッチ（適用時）** | 複数箇所にマッチ。手動確認が必要 |
+| **対象ファイルが見つからない（バッチ）** | `work_dir` とパッチ内の `target_file` を確認する |
+| **ファイルオープンエラー** | ファイルの存在と読み取り権限を確認する |
+
+## ライセンス
+
+ライセンスは未設定です。利用条件についてはリポジトリ管理者にお問い合わせください。
