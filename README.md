@@ -230,6 +230,3 @@ Unrecognized extensions use the generic profile (line comments `//`, block comme
 | **Target file not found (batch)** | Check `work_dir` and `target_file` in the patch |
 | **File open error** | Verify the file exists and is readable |
 
-## License
-
-License not yet specified. See repository maintainer for terms.
