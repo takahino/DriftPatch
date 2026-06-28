@@ -276,9 +276,9 @@ impl DriftPatchApp {
                 }
             }
             Err(GeneratorError::NoDiff) => Err("変更が見つかりませんでした".to_string()),
-            Err(GeneratorError::NotUnique { hunk_index, match_count }) => Err(format!(
-                "ハンク {} のパターンが {} 箇所マッチしており、一意に特定できません。\nより詳細な変更前後のコードを指定してください。",
-                hunk_index, match_count
+            Err(GeneratorError::NoMatch { hunk_index }) => Err(format!(
+                "ハンク {} の適用箇所が見つかりませんでした",
+                hunk_index
             )),
         }
     }
@@ -316,15 +316,23 @@ impl DriftPatchApp {
                 self.status_message =
                     format!("適用失敗: ハンク {} の対象箇所が見つかりません", hunk_index);
             }
-            Err(ApplyError::AmbiguousMatch {
+            Err(ApplyError::CountMismatch {
                 hunk_index,
-                match_count,
+                expected,
+                actual,
                 ..
             }) => {
                 self.preview_text = String::new();
                 self.status_message = format!(
-                    "適用失敗: ハンク {} が {} 箇所にマッチします。手動確認が必要です。",
-                    hunk_index, match_count
+                    "適用失敗: ハンク {} の期待マッチ数 {} と実際のマッチ数 {} が一致しません（ドリフト検出）。",
+                    hunk_index, expected, actual
+                );
+            }
+            Err(ApplyError::OverlappingMatches { hunk_index }) => {
+                self.preview_text = String::new();
+                self.status_message = format!(
+                    "適用失敗: ハンク {} の複数マッチの置換範囲が重なっています。",
+                    hunk_index
                 );
             }
         }

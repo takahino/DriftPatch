@@ -6,8 +6,15 @@ use crate::patch::model::{DiffHunk, PatchFile};
 pub enum ApplyError {
     /// 対象箇所が見つからない
     NoMatch { hunk_index: usize },
-    /// マッチが複数あり、適用不可
-    AmbiguousMatch { hunk_index: usize, match_count: usize, positions: Vec<usize> },
+    /// 期待マッチ数と実際のマッチ数が一致しない（ドリフト検出）
+    CountMismatch {
+        hunk_index: usize,
+        expected: usize,
+        actual: usize,
+        positions: Vec<usize>,
+    },
+    /// 複数マッチの置換範囲が重なる
+    OverlappingMatches { hunk_index: usize },
 }
 
 impl std::fmt::Display for ApplyError {
@@ -16,11 +23,23 @@ impl std::fmt::Display for ApplyError {
             ApplyError::NoMatch { hunk_index } => {
                 write!(f, "ハンク {} の適用箇所が見つかりませんでした", hunk_index)
             }
-            ApplyError::AmbiguousMatch { hunk_index, match_count, positions } => {
+            ApplyError::CountMismatch {
+                hunk_index,
+                expected,
+                actual,
+                positions,
+            } => {
                 write!(
                     f,
-                    "ハンク {} のマッチが {} 箇所あり、適用できません。位置: {:?}",
-                    hunk_index, match_count, positions
+                    "ハンク {} の期待マッチ数 {} と実際のマッチ数 {} が一致しません。位置: {:?}",
+                    hunk_index, expected, actual, positions
+                )
+            }
+            ApplyError::OverlappingMatches { hunk_index } => {
+                write!(
+                    f,
+                    "ハンク {} の複数マッチの置換範囲が重なっています",
+                    hunk_index
                 )
             }
         }
@@ -55,39 +74,65 @@ fn apply_hunk(
 
     let matches = find_patch_matches(&sig, &hunk.context_before, &hunk.removed, &hunk.context_after);
 
-    match matches.len() {
-        0 => Err(ApplyError::NoMatch { hunk_index: hunk_idx }),
-        1 => {
-            let match_start_in_sig = matches[0];
-            let sig_to_token_idx: Vec<usize> = tokens
-                .iter()
-                .enumerate()
-                .filter(|(_, t)| t.is_significant())
-                .map(|(i, _)| i)
-                .collect();
+    if matches.is_empty() {
+        return Err(ApplyError::NoMatch { hunk_index: hunk_idx });
+    }
 
-            let (change_start_byte, change_end_byte) = compute_change_byte_range(
+    if matches.len() != hunk.count {
+        return Err(ApplyError::CountMismatch {
+            hunk_index: hunk_idx,
+            expected: hunk.count,
+            actual: matches.len(),
+            positions: matches,
+        });
+    }
+
+    let sig_to_token_idx: Vec<usize> = tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.is_significant())
+        .map(|(i, _)| i)
+        .collect();
+
+    let has_ctx_before = !hunk.context_before.is_empty();
+    let has_ctx_after = !hunk.context_after.is_empty();
+
+    let mut ranges: Vec<(usize, usize)> = matches
+        .iter()
+        .map(|&match_start_in_sig| {
+            compute_change_byte_range(
                 &tokens,
                 &sig_to_token_idx,
                 match_start_in_sig,
                 hunk.removed.len(),
-                !hunk.context_before.is_empty(),
-                !hunk.context_after.is_empty(),
-            );
+                has_ctx_before,
+                has_ctx_after,
+            )
+        })
+        .collect();
 
-            Ok(format!(
-                "{}{}{}",
-                &text[..change_start_byte],
-                &hunk.added_text,
-                &text[change_end_byte..]
-            ))
+    // 重なりチェック
+    ranges.sort_by_key(|&(start, _)| start);
+    for window in ranges.windows(2) {
+        if window[0].1 > window[1].0 {
+            return Err(ApplyError::OverlappingMatches { hunk_index: hunk_idx });
         }
-        n => Err(ApplyError::AmbiguousMatch {
-            hunk_index: hunk_idx,
-            match_count: n,
-            positions: matches,
-        }),
     }
+
+    // 末尾から順に置換（オフセットずれを回避）
+    ranges.sort_by_key(|&(start, _)| std::cmp::Reverse(start));
+
+    let mut result = text.to_string();
+    for (change_start_byte, change_end_byte) in ranges {
+        result = format!(
+            "{}{}{}",
+            &result[..change_start_byte],
+            &hunk.added_text,
+            &result[change_end_byte..]
+        );
+    }
+
+    Ok(result)
 }
 
 /// significant トークン列上のマッチ位置から、target テキスト上の byte 置換範囲を計算する。
@@ -192,5 +237,81 @@ mod tests {
         let shifted = "// added line\nvoid foo() {\n    return null;\n}\n";
         let result = apply_patch(shifted, &patch, &JAVA);
         assert!(result.is_ok(), "行シフト後も適用できること: {:?}", result);
+    }
+
+    #[test]
+    fn test_apply_patch_multiple_matches() {
+        use crate::lexer::token::TokenKind;
+        use crate::lexer::Token;
+        use crate::patch::model::{DiffHunk, PatchFile};
+
+        fn tok(text: &str) -> Token {
+            Token::new(TokenKind::Code, text)
+        }
+
+        let orig = "void foo() { return null; } void bar() { return null; }";
+        let patch = PatchFile {
+            version: "1".to_string(),
+            id: "test".to_string(),
+            author: "test".to_string(),
+            created_at: "2026-01-01".to_string(),
+            description: "test".to_string(),
+            target_file: "Foo.java".to_string(),
+            language: "java".to_string(),
+            encoding: "UTF-8".to_string(),
+            hunks: vec![DiffHunk {
+                context_before: vec![tok("{")],
+                removed: vec![tok("return"), tok("null")],
+                added_text: " return 0".to_string(),
+                context_after: vec![tok(";")],
+                count: 2,
+            }],
+        };
+
+        let result = apply_patch(orig, &patch, &JAVA).unwrap();
+        assert_eq!(
+            result,
+            "void foo() { return 0; } void bar() { return 0; }"
+        );
+    }
+
+    #[test]
+    fn test_apply_patch_count_mismatch() {
+        use crate::lexer::token::TokenKind;
+        use crate::lexer::Token;
+        use crate::patch::model::{DiffHunk, PatchFile};
+
+        fn tok(text: &str) -> Token {
+            Token::new(TokenKind::Code, text)
+        }
+
+        let orig = "void foo() { return null; } void bar() { return null; }";
+        let patch = PatchFile {
+            version: "1".to_string(),
+            id: "test".to_string(),
+            author: "test".to_string(),
+            created_at: "2026-01-01".to_string(),
+            description: "test".to_string(),
+            target_file: "Foo.java".to_string(),
+            language: "java".to_string(),
+            encoding: "UTF-8".to_string(),
+            hunks: vec![DiffHunk {
+                context_before: vec![tok("{")],
+                removed: vec![tok("return"), tok("null")],
+                added_text: " return 0".to_string(),
+                context_after: vec![tok(";")],
+                count: 1,
+            }],
+        };
+
+        let result = apply_patch(orig, &patch, &JAVA);
+        assert!(matches!(
+            result,
+            Err(ApplyError::CountMismatch {
+                expected: 1,
+                actual: 2,
+                ..
+            })
+        ));
     }
 }

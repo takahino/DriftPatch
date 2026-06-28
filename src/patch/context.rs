@@ -7,22 +7,19 @@ pub struct ContextConfig {
     pub min_context: usize,
     /// 最大コンテキストトークン数
     pub max_context: usize,
-    /// 生成時に一意性チェックを行うか
-    pub uniqueness_check: bool,
 }
 
 impl Default for ContextConfig {
     fn default() -> Self {
         Self {
             min_context: 5,
-            max_context: 30,
-            uniqueness_check: true,
+            max_context: 240,
         }
     }
 }
 
 /// 段階的コンテキストサイズ（min → max の試行値）
-pub const CONTEXT_STEPS: &[usize] = &[5, 10, 20, 30];
+pub const CONTEXT_STEPS: &[usize] = &[5, 10, 20, 30, 60, 120, 240];
 
 /// significant tokens のスライスから前後 n 個を取り出す。
 /// `sig_tokens`: 全 significant tokens

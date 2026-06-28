@@ -207,16 +207,25 @@ fn classify_apply_error(err: &ApplyError) -> (String, Option<usize>, String) {
             Some(*hunk_index),
             format!("ハンク {} の適用箇所が見つかりませんでした", hunk_index),
         ),
-        ApplyError::AmbiguousMatch {
+        ApplyError::CountMismatch {
             hunk_index,
-            match_count,
+            expected,
+            actual,
             positions,
         } => (
-            "AmbiguousMatch".to_string(),
+            "CountMismatch".to_string(),
             Some(*hunk_index),
             format!(
-                "ハンク {} のマッチが {} 箇所あり、適用できません。位置: {:?}",
-                hunk_index, match_count, positions
+                "ハンク {} の期待マッチ数 {} と実際のマッチ数 {} が一致しません。位置: {:?}",
+                hunk_index, expected, actual, positions
+            ),
+        ),
+        ApplyError::OverlappingMatches { hunk_index } => (
+            "OverlappingMatches".to_string(),
+            Some(*hunk_index),
+            format!(
+                "ハンク {} の複数マッチの置換範囲が重なっています",
+                hunk_index
             ),
         ),
     }

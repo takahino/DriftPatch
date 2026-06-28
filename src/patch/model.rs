@@ -15,6 +15,10 @@ pub struct PatchFile {
     pub hunks: Vec<DiffHunk>,
 }
 
+fn default_count() -> usize {
+    1
+}
+
 /// 1つの差分ハンク
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiffHunk {
@@ -26,4 +30,7 @@ pub struct DiffHunk {
     pub added_text: String,
     /// 変更箇所の直後のコンテキスト（significant tokens のみ）
     pub context_after: Vec<Token>,
+    /// このハンクが適用されるべきマッチ数。適用時に実際のマッチ数と一致する必要がある。
+    #[serde(default = "default_count")]
+    pub count: usize,
 }

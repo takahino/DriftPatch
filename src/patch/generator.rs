@@ -7,21 +7,18 @@ use crate::patch::name_gen::generate_patch_id;
 #[derive(Debug)]
 pub enum GeneratorError {
     NoDiff,
-    /// パッチ生成時に一意性が取れなかった（最大コンテキストでもマッチ複数）
-    NotUnique {
-        hunk_index: usize,
-        match_count: usize,
-    },
+    /// パッチ生成時にマッチ箇所が見つからなかった
+    NoMatch { hunk_index: usize },
 }
 
 impl std::fmt::Display for GeneratorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             GeneratorError::NoDiff => write!(f, "変更が見つかりませんでした"),
-            GeneratorError::NotUnique { hunk_index, match_count } => write!(
+            GeneratorError::NoMatch { hunk_index } => write!(
                 f,
-                "ハンク {} のコンテキストが一意に特定できません（{} 箇所マッチ）。手動確認が必要です。",
-                hunk_index, match_count
+                "ハンク {} の適用箇所が見つかりませんでした",
+                hunk_index
             ),
         }
     }
@@ -77,8 +74,10 @@ pub fn generate_patch(
         let change_start = raw.orig_start;
         let change_end = raw.orig_end;
 
-        // コンテキストを段階的に拡張して一意性を確保
+        // コンテキストを段階的に拡張し、最小マッチ数を与えるコンテキストを選ぶ
         let mut found_hunk: Option<DiffHunk> = None;
+        let mut best_match_count = usize::MAX;
+
         for &ctx_size in CONTEXT_STEPS {
             if ctx_size > config.max_context {
                 break;
@@ -96,58 +95,40 @@ pub fn generate_patch(
                 .map(|t| (*t).clone())
                 .collect();
 
-            let added_text = extract_added_text(
-                edited,
-                &edit_tokens,
-                &orig_to_edit_sig,
-                &edit_sig_to_token,
-                change_start,
-                change_end,
-                !ctx_before.is_empty(),
-                !ctx_after.is_empty(),
-            );
+            let matches =
+                find_patch_matches(&orig_sig, &ctx_before, &removed, &ctx_after);
+            let match_count = matches.len();
 
-            if config.uniqueness_check {
-                let matches = find_patch_matches(&orig_sig, &ctx_before, &removed, &ctx_after);
-                if matches.len() == 1 {
-                    found_hunk = Some(DiffHunk {
-                        context_before: ctx_before,
-                        removed: removed.clone(),
-                        added_text,
-                        context_after: ctx_after,
-                    });
-                    break;
-                }
-            } else {
+            if match_count == 0 {
+                continue;
+            }
+
+            if match_count < best_match_count {
+                best_match_count = match_count;
+                let added_text = extract_added_text(
+                    edited,
+                    &edit_tokens,
+                    &orig_to_edit_sig,
+                    &edit_sig_to_token,
+                    change_start,
+                    change_end,
+                    !ctx_before.is_empty(),
+                    !ctx_after.is_empty(),
+                );
                 found_hunk = Some(DiffHunk {
                     context_before: ctx_before,
                     removed: removed.clone(),
                     added_text,
                     context_after: ctx_after,
+                    count: match_count,
                 });
-                break;
             }
         }
 
         if let Some(hunk) = found_hunk {
             hunks.push(hunk);
         } else {
-            let ctx_size = config.max_context;
-            let before_start = change_start.saturating_sub(ctx_size);
-            let after_end = (change_end + ctx_size).min(orig_sig.len());
-            let ctx_before: Vec<Token> = orig_sig[before_start..change_start]
-                .iter()
-                .map(|t| (*t).clone())
-                .collect();
-            let ctx_after: Vec<Token> = orig_sig[change_end..after_end]
-                .iter()
-                .map(|t| (*t).clone())
-                .collect();
-            let matches = find_patch_matches(&orig_sig, &ctx_before, &removed, &ctx_after);
-            return Err(GeneratorError::NotUnique {
-                hunk_index: hunk_idx,
-                match_count: matches.len(),
-            });
+            return Err(GeneratorError::NoMatch { hunk_index: hunk_idx });
         }
     }
 
@@ -316,5 +297,26 @@ mod tests {
         let config = ContextConfig::default();
         let result = generate_patch(orig, orig, &JAVA, "tester", "テスト", "Foo.java", "UTF-8", &config);
         assert!(matches!(result, Err(GeneratorError::NoDiff)));
+    }
+
+    #[test]
+    fn test_generate_patch_count_one_for_unique() {
+        let orig = "void foo() {\n    return null;\n}\n";
+        let edit = "void foo() {\n    Objects.requireNonNull(bar);\n    return null;\n}\n";
+        let config = ContextConfig::default();
+        let patch = generate_patch(orig, edit, &JAVA, "tester", "テスト", "Foo.java", "UTF-8", &config).unwrap();
+        assert_eq!(patch.hunks[0].count, 1);
+    }
+
+    #[test]
+    fn test_generate_patch_count_multiple_for_repeated() {
+        // 同一パターンが2箇所あり、両方を同じ変更にした場合は count=2
+        let orig = "void foo() { return null; } void bar() { return null; }";
+        let edit = "void foo() { return 0; } void bar() { return 0; }";
+        let config = ContextConfig::default();
+        let patch = generate_patch(orig, edit, &JAVA, "tester", "テスト", "Foo.java", "UTF-8", &config).unwrap();
+        // 2つのハンクに分かれるか、1ハンクで count=2 になるかは diff のグルーピング次第
+        let total_count: usize = patch.hunks.iter().map(|h| h.count).sum();
+        assert_eq!(total_count, 2, "2箇所の変更がカバーされること");
     }
 }

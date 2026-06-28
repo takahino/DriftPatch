@@ -246,15 +246,12 @@ pub fn generate_patches_from_commit(
                         reason: "変更が見つかりませんでした".to_string(),
                     });
                 }
-                Err(GeneratorError::NotUnique {
-                    hunk_index,
-                    match_count,
-                }) => {
+                Err(GeneratorError::NoMatch { hunk_index }) => {
                     skipped.push(SkippedEntry {
                         path: git_path,
                         reason: format!(
-                            "ハンク {} のパターンが {} 箇所マッチ（一意性なし）",
-                            hunk_index, match_count
+                            "ハンク {} の適用箇所が見つかりませんでした",
+                            hunk_index
                         ),
                     });
                 }
@@ -525,6 +522,7 @@ mod tests {
                 removed: vec![],
                 added_text: "x".to_string(),
                 context_after: vec![],
+                count: 1,
             }],
         };
         let split = split_patch_by_hunks(patch);
@@ -550,12 +548,14 @@ mod tests {
                     removed: vec![],
                     added_text: "a".to_string(),
                     context_after: vec![],
+                    count: 1,
                 },
                 DiffHunk {
                     context_before: vec![],
                     removed: vec![],
                     added_text: "b".to_string(),
                     context_after: vec![],
+                    count: 1,
                 },
             ],
         };
