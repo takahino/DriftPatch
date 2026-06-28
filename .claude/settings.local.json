@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wait)",
+      "Bash(git:*)",
+      "Bash(cargo --version)",
+      "Bash(rustc --version)",
+      "Bash(npm --version)",
+      "Bash(cargo tauri:*)",
+      "Bash(npm list:*)",
+      "Bash(npm install:*)",
+      "Bash(rm -f vite.config.ts)",
+      "Bash(cargo init:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo doc:*)",
+      "Bash(xargs grep:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo build:*)"
+    ]
+  }
+}

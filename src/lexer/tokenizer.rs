@@ -17,20 +17,24 @@ impl<'a> GenericTokenizer<'a> {
         let chars: Vec<char> = src.chars().collect();
         let len = chars.len();
         let mut i = 0;
+        let mut byte_pos = 0;
 
         'outer: while i < len {
             // 改行
             if chars[i] == '\n' {
-                tokens.push(Token::new(TokenKind::Newline, "\n"));
+                tokens.push(Token::with_start(TokenKind::Newline, "\n", byte_pos));
+                byte_pos += 1;
                 i += 1;
                 continue;
             }
             if chars[i] == '\r' {
                 if i + 1 < len && chars[i + 1] == '\n' {
-                    tokens.push(Token::new(TokenKind::Newline, "\r\n"));
+                    tokens.push(Token::with_start(TokenKind::Newline, "\r\n", byte_pos));
+                    byte_pos += 2;
                     i += 2;
                 } else {
-                    tokens.push(Token::new(TokenKind::Newline, "\r"));
+                    tokens.push(Token::with_start(TokenKind::Newline, "\r", byte_pos));
+                    byte_pos += 1;
                     i += 1;
                 }
                 continue;
@@ -39,7 +43,9 @@ impl<'a> GenericTokenizer<'a> {
             // ブロックコメント
             if let Some((bc_start, bc_end)) = self.profile.block_comment {
                 if starts_with_str(&chars, i, bc_start) {
-                    let (tok, consumed) = self.read_block_comment(&chars, i, bc_start, bc_end);
+                    let (tok, consumed) =
+                        self.read_block_comment(&chars, i, byte_pos, bc_start, bc_end);
+                    byte_pos += tok.text.len();
                     tokens.push(tok);
                     i += consumed;
                     continue;
@@ -49,7 +55,8 @@ impl<'a> GenericTokenizer<'a> {
             // 行コメント
             if let Some(lc) = self.profile.line_comment {
                 if starts_with_str(&chars, i, lc) {
-                    let (tok, consumed) = self.read_line_comment(&chars, i);
+                    let (tok, consumed) = self.read_line_comment(&chars, i, byte_pos);
+                    byte_pos += tok.text.len();
                     tokens.push(tok);
                     i += consumed;
                     continue;
@@ -61,7 +68,8 @@ impl<'a> GenericTokenizer<'a> {
                 for &delim in self.profile.string_delimiters {
                     let triple = format!("{}{}{}", delim, delim, delim);
                     if starts_with_str(&chars, i, &triple) {
-                        let (tok, consumed) = self.read_triple_string(&chars, i, delim);
+                        let (tok, consumed) = self.read_triple_string(&chars, i, byte_pos, delim);
+                        byte_pos += tok.text.len();
                         tokens.push(tok);
                         i += consumed;
                         continue 'outer;
@@ -72,7 +80,8 @@ impl<'a> GenericTokenizer<'a> {
             // 通常の文字列リテラル
             if self.profile.string_delimiters.contains(&chars[i]) {
                 let delim = chars[i];
-                let (tok, consumed) = self.read_string(&chars, i, delim);
+                let (tok, consumed) = self.read_string(&chars, i, byte_pos, delim);
+                byte_pos += tok.text.len();
                 tokens.push(tok);
                 i += consumed;
                 continue;
@@ -85,12 +94,14 @@ impl<'a> GenericTokenizer<'a> {
                     i += 1;
                 }
                 let text: String = chars[start..i].iter().collect();
-                tokens.push(Token::new(TokenKind::Whitespace, text));
+                tokens.push(Token::with_start(TokenKind::Whitespace, text.clone(), byte_pos));
+                byte_pos += text.len();
                 continue;
             }
 
             // CODE: 上記以外をまとめて1トークンとして読む
-            let (tok, consumed) = self.read_code(&chars, i);
+            let (tok, consumed) = self.read_code(&chars, i, byte_pos);
+            byte_pos += tok.text.len();
             tokens.push(tok);
             i += consumed;
         }
@@ -98,19 +109,23 @@ impl<'a> GenericTokenizer<'a> {
         tokens
     }
 
-    fn read_line_comment(&self, chars: &[char], start: usize) -> (Token, usize) {
+    fn read_line_comment(&self, chars: &[char], start: usize, start_byte: usize) -> (Token, usize) {
         let mut i = start;
         while i < chars.len() && chars[i] != '\n' && chars[i] != '\r' {
             i += 1;
         }
         let text: String = chars[start..i].iter().collect();
-        (Token::new(TokenKind::LineComment, text), i - start)
+        (
+            Token::with_start(TokenKind::LineComment, text, start_byte),
+            i - start,
+        )
     }
 
     fn read_block_comment(
         &self,
         chars: &[char],
         start: usize,
+        start_byte: usize,
         bc_start: &str,
         bc_end: &str,
     ) -> (Token, usize) {
@@ -123,10 +138,19 @@ impl<'a> GenericTokenizer<'a> {
             i += 1;
         }
         let text: String = chars[start..i].iter().collect();
-        (Token::new(TokenKind::BlockComment, text), i - start)
+        (
+            Token::with_start(TokenKind::BlockComment, text, start_byte),
+            i - start,
+        )
     }
 
-    fn read_string(&self, chars: &[char], start: usize, delim: char) -> (Token, usize) {
+    fn read_string(
+        &self,
+        chars: &[char],
+        start: usize,
+        start_byte: usize,
+        delim: char,
+    ) -> (Token, usize) {
         let mut i = start + 1; // 開きデリミタをスキップ
         while i < chars.len() {
             if chars[i] == '\\' {
@@ -144,10 +168,19 @@ impl<'a> GenericTokenizer<'a> {
             i += 1;
         }
         let text: String = chars[start..i].iter().collect();
-        (Token::new(TokenKind::StringLiteral, text), i - start)
+        (
+            Token::with_start(TokenKind::StringLiteral, text, start_byte),
+            i - start,
+        )
     }
 
-    fn read_triple_string(&self, chars: &[char], start: usize, delim: char) -> (Token, usize) {
+    fn read_triple_string(
+        &self,
+        chars: &[char],
+        start: usize,
+        start_byte: usize,
+        delim: char,
+    ) -> (Token, usize) {
         let triple = format!("{}{}{}", delim, delim, delim);
         let mut i = start + 3; // 開きトリプルクォートをスキップ
         while i < chars.len() {
@@ -158,13 +191,16 @@ impl<'a> GenericTokenizer<'a> {
             i += 1;
         }
         let text: String = chars[start..i].iter().collect();
-        (Token::new(TokenKind::StringLiteral, text), i - start)
+        (
+            Token::with_start(TokenKind::StringLiteral, text, start_byte),
+            i - start,
+        )
     }
 
     /// CODE トークンを読む。
     /// 識別子（英数字・アンダースコア）はまとめて1トークン。
     /// それ以外の記号は1文字ずつトークン化する。
-    fn read_code(&self, chars: &[char], start: usize) -> (Token, usize) {
+    fn read_code(&self, chars: &[char], start: usize, start_byte: usize) -> (Token, usize) {
         let ch = chars[start];
         if ch.is_alphanumeric() || ch == '_' {
             let mut i = start;
@@ -172,10 +208,16 @@ impl<'a> GenericTokenizer<'a> {
                 i += 1;
             }
             let text: String = chars[start..i].iter().collect();
-            (Token::new(TokenKind::Code, text), i - start)
+            (
+                Token::with_start(TokenKind::Code, text, start_byte),
+                i - start,
+            )
         } else {
             // 記号類は1文字ずつ
-            (Token::new(TokenKind::Code, ch.to_string()), 1)
+            (
+                Token::with_start(TokenKind::Code, ch.to_string(), start_byte),
+                1,
+            )
         }
     }
 }
@@ -204,6 +246,19 @@ mod tests {
             .map(|t| t.text.as_str())
             .collect();
         assert_eq!(sig, vec!["int", "x", "=", "1", ";"]);
+    }
+
+    #[test]
+    fn test_tokenize_byte_offsets() {
+        let tokenizer = GenericTokenizer::new(&JAVA);
+        let src = "int x;\n";
+        let tokens = tokenizer.tokenize(src);
+        assert_eq!(tokens[0].start, 0);
+        assert_eq!(tokens[0].text, "int");
+        assert_eq!(tokens[0].byte_end(), 3);
+        let newline = tokens.iter().find(|t| t.kind == TokenKind::Newline).unwrap();
+        assert_eq!(newline.start, 6);
+        assert_eq!(newline.text, "\n");
     }
 
     #[test]

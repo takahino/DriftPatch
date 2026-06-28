@@ -22,15 +22,34 @@ impl TokenKind {
 pub struct Token {
     pub kind: TokenKind,
     pub text: String,
+    /// ソース先頭からの byte offset（シリアライズ対象外）
+    #[serde(skip)]
+    pub start: usize,
 }
 
 impl Token {
     pub fn new(kind: TokenKind, text: impl Into<String>) -> Self {
-        Self { kind, text: text.into() }
+        Self {
+            kind,
+            text: text.into(),
+            start: 0,
+        }
+    }
+
+    pub fn with_start(kind: TokenKind, text: impl Into<String>, start: usize) -> Self {
+        Self {
+            kind,
+            text: text.into(),
+            start,
+        }
     }
 
     pub fn is_significant(&self) -> bool {
         self.kind.is_significant()
+    }
+
+    pub fn byte_end(&self) -> usize {
+        self.start + self.text.len()
     }
 }
 

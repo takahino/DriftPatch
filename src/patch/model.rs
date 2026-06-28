@@ -22,8 +22,8 @@ pub struct DiffHunk {
     pub context_before: Vec<Token>,
     /// 削除されるトークン
     pub removed: Vec<Token>,
-    /// 追加されるトークン
-    pub added: Vec<Token>,
+    /// 編集後ソースから verbatim 抽出した置換文字列（改行・タブ・コメント含む）
+    pub added_text: String,
     /// 変更箇所の直後のコンテキスト（significant tokens のみ）
     pub context_after: Vec<Token>,
 }

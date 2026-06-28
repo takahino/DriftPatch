@@ -1,4 +1,4 @@
-use crate::lexer::{GenericTokenizer, LanguageProfile, Token, TokenKind};
+use crate::lexer::{GenericTokenizer, LanguageProfile, Token};
 use crate::patch::context::find_patch_matches;
 use crate::patch::model::{DiffHunk, PatchFile};
 
@@ -28,8 +28,7 @@ impl std::fmt::Display for ApplyError {
 }
 
 /// パッチを適用してテキストを返す。
-/// スライディングウィンドウで significant tokens にマッチし、
-/// 元の書式（空白・コメント・改行）を維持しながらテキストを再構築する。
+/// significant tokens でマッチ位置を特定し、added_text を verbatim で挿入する。
 pub fn apply_patch(
     target_text: &str,
     patch: &PatchFile,
@@ -54,16 +53,12 @@ fn apply_hunk(
     let tokens = tokenizer.tokenize(text);
     let sig: Vec<&Token> = tokens.iter().filter(|t| t.is_significant()).collect();
 
-    // significant tokens 内でのマッチ位置を探す
     let matches = find_patch_matches(&sig, &hunk.context_before, &hunk.removed, &hunk.context_after);
 
     match matches.len() {
         0 => Err(ApplyError::NoMatch { hunk_index: hunk_idx }),
         1 => {
-            let match_start_in_sig = matches[0]; // removed の開始
-            let match_end_in_sig = match_start_in_sig + hunk.removed.len(); // removed の終了 (exclusive)
-
-            // significant tokens のインデックスを元のトークン列のインデックスへマッピング
+            let match_start_in_sig = matches[0];
             let sig_to_token_idx: Vec<usize> = tokens
                 .iter()
                 .enumerate()
@@ -71,28 +66,21 @@ fn apply_hunk(
                 .map(|(i, _)| i)
                 .collect();
 
-            // removed の開始・終了を元のトークン列で探す
-            let token_start = sig_to_token_idx[match_start_in_sig];
-            let token_end = if match_end_in_sig < sig_to_token_idx.len() {
-                sig_to_token_idx[match_end_in_sig]
-            } else {
-                tokens.len()
-            };
+            let (change_start_byte, change_end_byte) = compute_change_byte_range(
+                &tokens,
+                &sig_to_token_idx,
+                match_start_in_sig,
+                hunk.removed.len(),
+                !hunk.context_before.is_empty(),
+                !hunk.context_after.is_empty(),
+            );
 
-            // removed の直前まで空白・コメントを含めてスキャンして、
-            // 実際の削除開始位置を少し手前に調整（先行する空白もまとめて削除）
-            // → シンプルに: removed の直前の非significant tokensも含む範囲を削除
-            let actual_token_start = leading_whitespace_start(&tokens, token_start);
-            let actual_token_end = trailing_whitespace_end(&tokens, token_end);
-
-            // テキストを再構築
-            let prefix: String = tokens[..actual_token_start].iter().map(|t| t.text.as_str()).collect();
-            let suffix: String = tokens[actual_token_end..].iter().map(|t| t.text.as_str()).collect();
-
-            // added トークンをテキスト化（スペースで自然に結合）
-            let added_text = tokens_to_text(&hunk.added, &tokens, actual_token_start);
-
-            Ok(format!("{}{}{}", prefix, added_text, suffix))
+            Ok(format!(
+                "{}{}{}",
+                &text[..change_start_byte],
+                &hunk.added_text,
+                &text[change_end_byte..]
+            ))
         }
         n => Err(ApplyError::AmbiguousMatch {
             hunk_index: hunk_idx,
@@ -102,105 +90,37 @@ fn apply_hunk(
     }
 }
 
-/// token_start の直前にある連続した空白・改行トークンの開始インデックスを返す。
-/// 改行をまたぐ場合は行頭まで戻る。
-fn leading_whitespace_start(tokens: &[Token], token_start: usize) -> usize {
-    let mut i = token_start;
-    // 直前の空白（タブ含む）のみ除去（改行はまたがない）
-    while i > 0 {
-        match tokens[i - 1].kind {
-            TokenKind::Whitespace => i -= 1,
-            _ => break,
-        }
-    }
-    i
-}
+/// significant トークン列上のマッチ位置から、target テキスト上の byte 置換範囲を計算する。
+fn compute_change_byte_range(
+    tokens: &[Token],
+    sig_to_token_idx: &[usize],
+    match_start_in_sig: usize,
+    removed_len: usize,
+    has_ctx_before: bool,
+    has_ctx_after: bool,
+) -> (usize, usize) {
+    let change_start_byte = if has_ctx_before && match_start_in_sig > 0 {
+        let last_ctx_before_sig = match_start_in_sig - 1;
+        let token_idx = sig_to_token_idx[last_ctx_before_sig];
+        tokens[token_idx].byte_end()
+    } else {
+        0
+    };
 
-/// token_end の直後にある連続した空白・改行トークンの終了インデックスを返す。
-fn trailing_whitespace_end(tokens: &[Token], token_end: usize) -> usize {
-    let mut i = token_end;
-    // 直後の空白・改行を除去
-    while i < tokens.len() {
-        match tokens[i].kind {
-            TokenKind::Whitespace | TokenKind::Newline => i += 1,
-            _ => break,
-        }
-    }
-    i
-}
-
-/// added トークン列をテキストとして整形する。
-/// コードトークンとして空白で区切って結合し、
-/// 元テキストの行頭インデントを引き継ぐようにする。
-fn tokens_to_text(added: &[Token], orig_tokens: &[Token], insert_pos: usize) -> String {
-    if added.is_empty() {
-        return String::new();
-    }
-
-    // 挿入位置の行頭インデントを取得
-    let indent = detect_indent(orig_tokens, insert_pos);
-
-    // トークンをスペース区切りで結合し、改行があれば適切にインデントを付与する
-    // シンプルな実装: 記号トークンはスペースなし、識別子はスペースあり
-    let mut result = indent.clone();
-    let mut prev_kind: Option<&TokenKind> = None;
-
-    for (i, tok) in added.iter().enumerate() {
-        if i == 0 {
-            result.push_str(&tok.text);
+    let change_end_byte = if has_ctx_after {
+        let first_ctx_after_sig = match_start_in_sig + removed_len;
+        if first_ctx_after_sig < sig_to_token_idx.len() {
+            let token_idx = sig_to_token_idx[first_ctx_after_sig];
+            tokens[token_idx].start
         } else {
-            let need_space = match (prev_kind, &tok.kind) {
-                // 記号の前後はスペース不要
-                (_, TokenKind::Code) if is_punctuation(&tok.text) => false,
-                (Some(TokenKind::Code), _) if prev_is_punctuation(added, i) => false,
-                // 識別子間はスペース
-                (Some(TokenKind::Code), TokenKind::Code) => true,
-                (Some(TokenKind::StringLiteral), TokenKind::Code) => true,
-                (Some(TokenKind::Code), TokenKind::StringLiteral) => true,
-                _ => false,
-            };
-            if need_space {
-                result.push(' ');
-            }
-            result.push_str(&tok.text);
+            // context_after があるが sig 列の末尾に達した場合はテキスト末尾
+            tokens.last().map(|t| t.byte_end()).unwrap_or(0)
         }
-        prev_kind = Some(&tok.kind);
-    }
-    result.push('\n');
-    result
-}
+    } else {
+        tokens.last().map(|t| t.byte_end()).unwrap_or(0)
+    };
 
-fn is_punctuation(text: &str) -> bool {
-    matches!(
-        text,
-        "." | "," | ";" | ":" | "(" | ")" | "[" | "]" | "{" | "}" | "<" | ">"
-    )
-}
-
-fn prev_is_punctuation(tokens: &[Token], i: usize) -> bool {
-    if i == 0 { return false; }
-    is_punctuation(&tokens[i - 1].text)
-}
-
-/// 挿入位置の直前の行頭インデントを検出する
-fn detect_indent(tokens: &[Token], insert_pos: usize) -> String {
-    // insert_pos の直前の改行を探し、その後の空白を取得
-    let mut i = insert_pos.min(tokens.len());
-    // 直前の改行を探す
-    while i > 0 {
-        i -= 1;
-        if tokens[i].kind == TokenKind::Newline {
-            // この改行の直後の空白トークンを収集
-            let mut j = i + 1;
-            let mut indent = String::new();
-            while j < tokens.len() && tokens[j].kind == TokenKind::Whitespace {
-                indent.push_str(&tokens[j].text);
-                j += 1;
-            }
-            return indent;
-        }
-    }
-    String::new()
+    (change_start_byte, change_end_byte)
 }
 
 #[cfg(test)]
@@ -234,6 +154,30 @@ mod tests {
             .collect();
 
         assert_eq!(result_sig, edit_sig);
+    }
+
+    #[test]
+    fn test_apply_patch_verbatim() {
+        let orig = "void foo() {\n    return null;\n}\n";
+        let edit = "void foo() {\n    Objects.requireNonNull(bar);\n    return null;\n}\n";
+        let config = ContextConfig::default();
+
+        let patch = generate_patch(orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config).unwrap();
+        let result = apply_patch(orig, &patch, &JAVA).unwrap();
+
+        assert_eq!(result, edit);
+    }
+
+    #[test]
+    fn test_apply_patch_tab_indent() {
+        let orig = "void foo() {\n\treturn null;\n}\n";
+        let edit = "void foo() {\n\tObjects.requireNonNull(bar);\n\treturn null;\n}\n";
+        let config = ContextConfig::default();
+
+        let patch = generate_patch(orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config).unwrap();
+        let result = apply_patch(orig, &patch, &JAVA).unwrap();
+
+        assert_eq!(result, edit);
     }
 
     #[test]
