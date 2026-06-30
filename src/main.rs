@@ -4,11 +4,17 @@ mod ui;
 use app::DriftPatchApp;
 
 fn main() -> eframe::Result<()> {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("DriftPatch")
+        .with_inner_size([1200.0, 800.0])
+        .with_min_inner_size([800.0, 500.0]);
+
+    if let Some(icon) = load_icon() {
+        viewport = viewport.with_icon(icon);
+    }
+
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("DriftPatch")
-            .with_inner_size([1200.0, 800.0])
-            .with_min_inner_size([800.0, 500.0]),
+        viewport,
         ..Default::default()
     };
 
@@ -20,6 +26,18 @@ fn main() -> eframe::Result<()> {
             Ok(Box::new(DriftPatchApp::default()))
         }),
     )
+}
+
+/// `icon.png` を読み込んでウィンドウアイコン用の RGBA データに変換する。
+fn load_icon() -> Option<egui::IconData> {
+    let bytes = include_bytes!("../icon.png");
+    let img = image::load_from_memory(bytes).ok()?.into_rgba8();
+    let (width, height) = img.dimensions();
+    Some(egui::IconData {
+        rgba: img.into_raw(),
+        width,
+        height,
+    })
 }
 
 /// 日本語フォントを egui に登録する。

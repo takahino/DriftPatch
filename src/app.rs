@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use driftpatch::encoding::read_file_auto;
+use driftpatch::encoding::{read_file_auto, write_file_auto};
 use driftpatch::git_import::{generate_patches_from_commit, list_commits, CommitInfo};
 use driftpatch::lexer::profiles::detect_profile;
 use driftpatch::patch::context::ContextConfig;
@@ -21,6 +21,13 @@ pub struct Settings {
     /// Git リポジトリパス（空の場合は work_dir を使用）
     #[serde(default)]
     pub git_repo_path: String,
+    /// パッチ適用時に .bak バックアップを作成するか（GUI のみ）
+    #[serde(default = "default_create_backup")]
+    pub create_backup: bool,
+}
+
+fn default_create_backup() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -30,6 +37,7 @@ impl Default for Settings {
             username: String::new(),
             work_dir: String::new(),
             git_repo_path: String::new(),
+            create_backup: default_create_backup(),
         }
     }
 }
@@ -354,10 +362,33 @@ impl DriftPatchApp {
 
         match apply_patch(&self.original_text, &patch, profile) {
             Ok(result) => {
+                let bak_path = if self.settings.create_backup {
+                    let bak = backup_path(file_path);
+                    if let Err(e) = std::fs::copy(file_path, &bak) {
+                        self.status_message =
+                            format!("パッチ適用エラー: バックアップ作成失敗: {}", e);
+                        return;
+                    }
+                    Some(bak)
+                } else {
+                    None
+                };
+
+                if let Err(e) = write_file_auto(file_path, &result, &self.encoding) {
+                    self.status_message = format!("パッチ適用エラー: ファイル書込失敗: {}", e);
+                    return;
+                }
                 self.original_text = result.clone();
                 self.edited_text = result;
                 self.preview_text = String::new();
-                self.status_message = "パッチ適用完了".to_string();
+                self.status_message = match bak_path {
+                    Some(bak) => format!(
+                        "パッチ適用完了: {} に保存、バックアップ: {}",
+                        file_path.display(),
+                        bak.display()
+                    ),
+                    None => format!("パッチ適用完了: {} に保存", file_path.display()),
+                };
             }
             Err(e) => {
                 self.status_message = format!("パッチ適用エラー: {}", e);
@@ -530,6 +561,16 @@ impl DriftPatchApp {
     }
 }
 
+/// 適用前のバックアップファイルパスを返す（Foo.java -> Foo.java.bak）
+fn backup_path(file_path: &std::path::Path) -> std::path::PathBuf {
+    let mut name = file_path
+        .file_name()
+        .map(std::ffi::OsString::from)
+        .unwrap_or_default();
+    name.push(".bak");
+    file_path.with_file_name(name)
+}
+
 impl eframe::App for DriftPatchApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         crate::ui::render(self, ui);
@@ -573,5 +614,131 @@ mod tests {
         let filtered = app.patches_for_open_file();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].0, "src/Foo.java/a.dpatch");
+    }
+
+    #[test]
+    fn test_apply_selected_patch_writes_file_and_backup() {
+        use driftpatch::lexer::profiles::JAVA;
+        use driftpatch::patch::context::ContextConfig;
+        use driftpatch::patch::generator::generate_patch;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "driftpatch_apply_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let target = tmp.join("Foo.java");
+        let orig = "void foo() {\n    return null;\n}\n";
+        let edit = "void foo() {\n    Objects.requireNonNull(bar);\n    return null;\n}\n";
+        std::fs::write(&target, orig).unwrap();
+
+        let patch = generate_patch(
+            orig,
+            edit,
+            &JAVA,
+            "tester",
+            "t",
+            "Foo.java",
+            "UTF-8",
+            &ContextConfig::default(),
+        )
+        .unwrap();
+
+        let mut app = DriftPatchApp::default();
+        app.file_path = Some(target.clone());
+        app.original_text = orig.to_string();
+        app.edited_text = orig.to_string();
+        app.encoding = "UTF-8".to_string();
+        app.patches = vec![("Foo.java/p.dpatch".to_string(), patch)];
+        app.selected_patch = Some("Foo.java/p.dpatch".to_string());
+
+        app.apply_selected_patch();
+
+        assert!(
+            app.status_message.contains("パッチ適用完了"),
+            "ステータス: {}",
+            app.status_message
+        );
+
+        // ファイル本体がパッチ済み内容に更新されていること
+        let on_disk = std::fs::read_to_string(&target).unwrap();
+        assert!(on_disk.contains("Objects.requireNonNull"));
+
+        // .bak バックアップが適用前の元内容であること
+        let bak = target.with_file_name("Foo.java.bak");
+        assert!(bak.exists(), "バックアップが作成されていません: {}", bak.display());
+        assert_eq!(std::fs::read_to_string(&bak).unwrap(), orig);
+
+        // メモリ状態もパッチ済み内容に更新されていること
+        assert_eq!(app.original_text, on_disk);
+        assert_eq!(app.edited_text, on_disk);
+        assert!(app.preview_text.is_empty());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_apply_selected_patch_skips_backup_when_disabled() {
+        use driftpatch::lexer::profiles::JAVA;
+        use driftpatch::patch::context::ContextConfig;
+        use driftpatch::patch::generator::generate_patch;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "driftpatch_nobak_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let target = tmp.join("Bar.java");
+        let orig = "void foo() {\n    return null;\n}\n";
+        let edit = "void foo() {\n    Objects.requireNonNull(bar);\n    return null;\n}\n";
+        std::fs::write(&target, orig).unwrap();
+
+        let patch = generate_patch(
+            orig,
+            edit,
+            &JAVA,
+            "tester",
+            "t",
+            "Bar.java",
+            "UTF-8",
+            &ContextConfig::default(),
+        )
+        .unwrap();
+
+        let mut app = DriftPatchApp::default();
+        app.settings.create_backup = false;
+        app.file_path = Some(target.clone());
+        app.original_text = orig.to_string();
+        app.edited_text = orig.to_string();
+        app.encoding = "UTF-8".to_string();
+        app.patches = vec![("Bar.java/p.dpatch".to_string(), patch)];
+        app.selected_patch = Some("Bar.java/p.dpatch".to_string());
+
+        app.apply_selected_patch();
+
+        assert!(
+            app.status_message.contains("パッチ適用完了"),
+            "ステータス: {}",
+            app.status_message
+        );
+        assert!(
+            !app.status_message.contains("バックアップ"),
+            "バックアップ無効時はステータスにバックアップを含めない: {}",
+            app.status_message
+        );
+
+        // ファイル本体はパッチ済み内容に更新されていること
+        let on_disk = std::fs::read_to_string(&target).unwrap();
+        assert!(on_disk.contains("Objects.requireNonNull"));
+
+        // .bak は作成されないこと
+        let bak = target.with_file_name("Bar.java.bak");
+        assert!(!bak.exists(), "バックアップが作成されてしまいました: {}", bak.display());
+
+        assert_eq!(app.original_text, on_disk);
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

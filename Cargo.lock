@@ -981,6 +981,7 @@ dependencies = [
  "egui_code_editor",
  "encoding_rs",
  "git2",
+ "image",
  "regex",
  "rfd",
  "rust_xlsxwriter",

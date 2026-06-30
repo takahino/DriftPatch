@@ -38,6 +38,23 @@ pub fn read_file_auto(path: &std::path::Path) -> Result<(String, String), std::i
     Ok(decode_bytes(&bytes))
 }
 
+/// テキストを指定エンコーディングでエンコードしてファイルへ書き込む。
+/// encoding_name に "BOM" を含む場合は UTF-8 BOM を先頭に付加する。
+pub fn write_file_auto(
+    path: &std::path::Path,
+    text: &str,
+    encoding_name: &str,
+) -> std::io::Result<()> {
+    let mut bytes = encode_text(text, encoding_name);
+    if encoding_name.to_ascii_uppercase().contains("BOM") {
+        let mut with_bom = Vec::with_capacity(3 + bytes.len());
+        with_bom.extend_from_slice(b"\xef\xbb\xbf");
+        with_bom.append(&mut bytes);
+        bytes = with_bom;
+    }
+    std::fs::write(path, bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,5 +82,15 @@ mod tests {
         let encoded = encode_text(original, "UTF-8");
         let (decoded, _) = decode_bytes(&encoded);
         assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn test_write_file_auto_preserves_utf8_bom() {
+        let path = std::env::temp_dir().join(format!("driftpatch_bom_{}.txt", uuid::Uuid::new_v4()));
+        write_file_auto(&path, "abc", "UTF-8 BOM").unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..3], b"\xef\xbb\xbf");
+        assert_eq!(&bytes[3..], b"abc");
+        let _ = std::fs::remove_file(&path);
     }
 }

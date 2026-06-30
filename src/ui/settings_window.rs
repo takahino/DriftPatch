@@ -66,6 +66,10 @@ pub fn render_settings_window(app: &mut DriftPatchApp, ctx: &egui::Context) {
                         }
                     });
                     ui.end_row();
+
+                    ui.label("適用時に.bak作成:");
+                    ui.checkbox(&mut app.settings.create_backup, "有効");
+                    ui.end_row();
                 });
 
             ui.separator();
