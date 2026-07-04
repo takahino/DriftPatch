@@ -1,15 +1,16 @@
 use crate::app::DriftPatchApp;
+use driftpatch::i18n::{tr, tr_args};
 use egui::Context;
 
 /// ツールバーを描画する（ファイルを開く・パッチ生成・設定ボタン + ステータス表示）
 pub fn render_toolbar(app: &mut DriftPatchApp, ctx: &Context, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         // ファイルを開くボタン
-        if ui.button("📂 ファイルを開く").clicked() {
+        if ui.button(tr("gui.btn_open")).clicked() {
             // rfd でネイティブファイル選択ダイアログを開く
             // ブロッキング版を使用（GUIスレッドでの呼び出し）
             if let Some(path) = rfd::FileDialog::new()
-                .set_title("ファイルを開く")
+                .set_title(tr("gui.dlg_open_title"))
                 .pick_file()
             {
                 app.open_file(path);
@@ -19,7 +20,7 @@ pub fn render_toolbar(app: &mut DriftPatchApp, ctx: &Context, ui: &mut egui::Ui)
         ui.separator();
 
         // Git コミットからパッチ生成
-        if ui.button("📜 Git コミットから取り込み").clicked() {
+        if ui.button(tr("gui.btn_git_import")).clicked() {
             app.open_git_import();
         }
 
@@ -28,7 +29,7 @@ pub fn render_toolbar(app: &mut DriftPatchApp, ctx: &Context, ui: &mut egui::Ui)
         // パッチ生成ボタン（ファイルが開かれている場合のみ有効）
         let can_generate = app.file_path.is_some();
         ui.add_enabled_ui(can_generate, |ui| {
-            if ui.button("🔧 パッチ生成...").clicked() {
+            if ui.button(tr("gui.btn_generate")).clicked() {
                 app.generate_patch_dialog = Some(crate::app::GeneratePatchDialog::default());
             }
         });
@@ -36,7 +37,7 @@ pub fn render_toolbar(app: &mut DriftPatchApp, ctx: &Context, ui: &mut egui::Ui)
         ui.separator();
 
         // 設定ボタン
-        if ui.button("⚙ 設定").clicked() {
+        if ui.button(tr("gui.btn_settings")).clicked() {
             app.show_settings = !app.show_settings;
         }
 
@@ -45,9 +46,13 @@ pub fn render_toolbar(app: &mut DriftPatchApp, ctx: &Context, ui: &mut egui::Ui)
         // ステータス表示
         if let Some(ref path) = app.file_path {
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-            ui.label(format!(
-                "📄 {}  |  言語: {}  |  ENC: {}",
-                filename, app.language, app.encoding
+            ui.label(tr_args(
+                "gui.status_file",
+                &[
+                    ("file", filename),
+                    ("lang", app.language),
+                    ("enc", &app.encoding),
+                ],
             ));
         }
     });
@@ -65,14 +70,14 @@ fn render_generate_dialog(app: &mut DriftPatchApp, ctx: &Context) {
     let mut do_generate = false;
     let mut close = false;
 
-    egui::Window::new("パッチ生成")
+    egui::Window::new(tr("gui.win_generate"))
         .open(&mut open)
         .resizable(false)
         .collapsible(false)
         .show(ctx, |ui| {
             let dialog = app.generate_patch_dialog.as_mut().unwrap();
 
-            ui.label("パッチの説明（Gitリポジトリの要件番号など）:");
+            ui.label(tr("gui.generate_desc_label"));
             ui.text_edit_singleline(&mut dialog.description);
 
             if let Some(ref err) = dialog.error.clone() {
@@ -85,10 +90,10 @@ fn render_generate_dialog(app: &mut DriftPatchApp, ctx: &Context) {
             ui.separator();
 
             ui.horizontal(|ui| {
-                if ui.button("生成").clicked() {
+                if ui.button(tr("gui.btn_do_generate")).clicked() {
                     do_generate = true;
                 }
-                if ui.button("キャンセル").clicked() {
+                if ui.button(tr("gui.btn_cancel")).clicked() {
                     close = true;
                 }
             });

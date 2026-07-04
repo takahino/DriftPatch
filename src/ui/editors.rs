@@ -1,5 +1,6 @@
 use crate::app::DriftPatchApp;
 use driftpatch::diff::inline_diff;
+use driftpatch::i18n::tr;
 use egui_code_editor::{ColorTheme, Syntax};
 
 use super::diff_editor;
@@ -29,7 +30,7 @@ pub fn render_editors(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
         // ---- 左列: 元テキスト（読取専用）----
         ui.allocate_ui(egui::vec2(col_width, available.y), |ui| {
             ui.vertical(|ui| {
-                ui.label("修正前（読取専用）");
+                ui.label(tr("gui.col_original"));
                 let _scroll_resp = egui::ScrollArea::vertical()
                     .id_salt("editor_left")
                     .vertical_scroll_offset(app.scroll_offset)
@@ -54,7 +55,7 @@ pub fn render_editors(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
         // ---- 中列: 編集用エディタ ----
         ui.allocate_ui(egui::vec2(col_width, available.y), |ui| {
             ui.vertical(|ui| {
-                ui.label("修正画面（編集可）");
+                ui.label(tr("gui.col_editable"));
                 let scroll_resp =
                     egui::ScrollArea::vertical()
                         .id_salt("editor_center")
@@ -79,7 +80,7 @@ pub fn render_editors(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
         // ---- 右列: パッチ適用プレビュー（読取専用）----
         ui.allocate_ui(egui::vec2(col_width, available.y), |ui| {
             ui.vertical(|ui| {
-                ui.label("パッチ適用プレビュー");
+                ui.label(tr("gui.col_preview"));
                 egui::ScrollArea::vertical()
                     .id_salt("editor_right")
                     .vertical_scroll_offset(app.scroll_offset)

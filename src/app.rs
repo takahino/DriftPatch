@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use driftpatch::encoding::read_file_auto;
 use driftpatch::git_import::{generate_patches_from_commit, list_commits, CommitInfo};
+use driftpatch::i18n::{self, tr, tr_args};
 use driftpatch::lexer::profiles::detect_profile;
 use driftpatch::patch::context::ContextConfig;
 use driftpatch::patch::file_ops::backup_path;
@@ -10,8 +11,7 @@ use driftpatch::patch::name_gen::generate_filename;
 use driftpatch::patch::repository::PatchRepository;
 use driftpatch::patch::verify::verify_significant_tokens;
 use driftpatch::patch::{
-    apply_patch, generate_patch, ApplyError, ApplyOptions, GeneratorError, PatchWorkspace,
-    PlannedAction,
+    apply_patch, generate_patch, ApplyError, ApplyOptions, PatchWorkspace, PlannedAction,
 };
 
 /// 永続化する設定
@@ -29,10 +29,17 @@ pub struct Settings {
     /// パッチ適用時に .bak バックアップを作成するか（GUI のみ）
     #[serde(default = "default_create_backup")]
     pub create_backup: bool,
+    /// UI 言語（"ja" / "en"）
+    #[serde(default = "default_ui_language")]
+    pub ui_language: String,
 }
 
 fn default_create_backup() -> bool {
     true
+}
+
+fn default_ui_language() -> String {
+    "ja".to_string()
 }
 
 impl Default for Settings {
@@ -43,6 +50,7 @@ impl Default for Settings {
             work_dir: String::new(),
             git_repo_path: String::new(),
             create_backup: default_create_backup(),
+            ui_language: default_ui_language(),
         }
     }
 }
@@ -130,6 +138,10 @@ pub struct DriftPatchApp {
 impl Default for DriftPatchApp {
     fn default() -> Self {
         let settings = Settings::load();
+        // 初回フレーム描画前に UI 言語を確定させる
+        if let Some(lang) = i18n::lang_from_str(&settings.ui_language) {
+            i18n::set_lang(lang);
+        }
         Self {
             original_text: String::new(),
             edited_text: String::new(),
@@ -141,7 +153,7 @@ impl Default for DriftPatchApp {
             patches: Vec::new(),
             selected_patch: None,
             settings,
-            status_message: "ファイルを開いてください".to_string(),
+            status_message: tr("gui.open_prompt").to_string(),
             show_settings: false,
             generate_patch_dialog: None,
             git_import_dialog: None,
@@ -166,13 +178,13 @@ impl DriftPatchApp {
                 self.reload_patches();
 
                 let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                self.status_message = format!(
-                    "開いたファイル: {} | 言語: {} | エンコード: {}",
-                    filename, self.language, enc
+                self.status_message = tr_args(
+                    "gui.opened_file",
+                    &[("file", filename), ("lang", self.language), ("enc", &enc)],
                 );
             }
             Err(e) => {
-                self.status_message = format!("ファイルオープンエラー: {}", e);
+                self.status_message = tr_args("gui.open_error", &[("err", &e.to_string())]);
             }
         }
     }
@@ -194,7 +206,7 @@ impl DriftPatchApp {
                 }
             }
             Err(e) => {
-                self.status_message = format!("パッチ一覧読み込みエラー: {}", e);
+                self.status_message = tr_args("gui.patch_list_error", &[("err", &e.to_string())]);
             }
         }
     }
@@ -234,13 +246,13 @@ impl DriftPatchApp {
     fn target_file_relative(&self, file_path: &std::path::Path) -> Result<String, String> {
         let work_dir = self.settings.work_dir.trim();
         if work_dir.is_empty() {
-            return Err("work_dir が設定されていません（設定を確認してください）".to_string());
+            return Err(tr("gui.workdir_not_set_check").to_string());
         }
         let work_path = std::path::Path::new(work_dir);
         let rel = file_path.strip_prefix(work_path).map_err(|_| {
-            format!(
-                "対象ファイルが work_dir 配下にありません: {}",
-                file_path.display()
+            tr_args(
+                "git.not_under_workdir",
+                &[("path", &file_path.display().to_string())],
             )
         })?;
         Ok(rel.to_str().unwrap_or("").replace('\\', "/"))
@@ -249,10 +261,10 @@ impl DriftPatchApp {
     /// パッチの target_file から絶対パスを解決する
     fn resolve_target_file(&self, patch: &PatchFile) -> Result<PathBuf, String> {
         if self.settings.work_dir.trim().is_empty() {
-            return Err("work_dir が設定されていません".to_string());
+            return Err(tr("gui.workdir_not_set").to_string());
         }
         if patch.target_file.is_empty() {
-            return Err("パッチに target_file がありません".to_string());
+            return Err(tr("gui.patch_no_target").to_string());
         }
         Ok(std::path::Path::new(&self.settings.work_dir).join(&patch.target_file))
     }
@@ -260,13 +272,11 @@ impl DriftPatchApp {
     /// 元テキストと編集テキストからパッチを生成して保存する
     pub fn generate_and_save_patch(&mut self, description: &str) -> Result<(), String> {
         let Some(ref file_path) = self.file_path.clone() else {
-            return Err("ファイルが開かれていません".to_string());
+            return Err(tr("gui.no_file_open").to_string());
         };
 
         if self.settings.patch_repo_path.is_empty() {
-            return Err(
-                "パッチリポジトリパスが設定されていません（設定を確認してください）".to_string(),
-            );
+            return Err(tr("gui.repo_not_set_check").to_string());
         }
 
         let target_file = self.target_file_relative(file_path)?;
@@ -288,18 +298,18 @@ impl DriftPatchApp {
                 let repo = PatchRepository::new(&self.settings.patch_repo_path);
                 match repo.save(&patch, &filename) {
                     Ok(saved_path) => {
-                        self.status_message = format!("パッチ保存: {}", saved_path.display());
+                        self.status_message = tr_args(
+                            "gui.patch_saved",
+                            &[("path", &saved_path.display().to_string())],
+                        );
                         self.reload_patches();
                         Ok(())
                     }
-                    Err(e) => Err(format!("パッチ保存エラー: {}", e)),
+                    Err(e) => Err(tr_args("gui.patch_save_error", &[("err", &e.to_string())])),
                 }
             }
-            Err(GeneratorError::NoDiff) => Err("変更が見つかりませんでした".to_string()),
-            Err(GeneratorError::NoMatch { hunk_index }) => Err(format!(
-                "ハンク {} の適用箇所が見つかりませんでした",
-                hunk_index
-            )),
+            // GeneratorError の Display は i18n 済み
+            Err(e) => Err(e.to_string()),
         }
     }
 
@@ -327,8 +337,7 @@ impl DriftPatchApp {
         };
         if !applies_to_open_file {
             self.preview_text = String::new();
-            self.status_message =
-                "選択したパッチは現在開いているファイル向けではありません".to_string();
+            self.status_message = tr("gui.patch_not_for_open_file").to_string();
             return;
         }
 
@@ -341,17 +350,13 @@ impl DriftPatchApp {
                 self.status_message = match patch.verify_tokens.as_deref() {
                     Some(expected) => {
                         match verify_significant_tokens(&self.original_text, profile, expected) {
-                            Ok(()) => {
-                                "削除パッチ: 適用するとこのファイルは削除されます（内容検証 OK）"
-                                    .to_string()
+                            Ok(()) => tr("gui.delete_preview_ok").to_string(),
+                            Err(m) => {
+                                tr_args("gui.delete_preview_drift", &[("mismatch", &m.to_string())])
                             }
-                            Err(m) => format!(
-                                "削除パッチ: 内容がパッチ記録時と一致しません（ドリフト検出）: {}",
-                                m
-                            ),
                         }
                     }
-                    None => "削除パッチ: verify_tokens がありません（不正なパッチ）".to_string(),
+                    None => tr("gui.delete_preview_invalid").to_string(),
                 };
                 return;
             }
@@ -360,14 +365,13 @@ impl DriftPatchApp {
                 match apply_patch("", &patch, profile) {
                     Ok(text) => {
                         self.preview_text = text;
-                        self.status_message = format!(
-                            "新規作成パッチ: 適用すると {} が作成されます",
-                            patch.target_file
-                        );
+                        self.status_message =
+                            tr_args("gui.create_preview", &[("path", &patch.target_file)]);
                     }
                     Err(e) => {
                         self.preview_text = String::new();
-                        self.status_message = format!("プレビュー失敗: {}", e);
+                        self.status_message =
+                            tr_args("gui.preview_failed", &[("err", &e.to_string())]);
                     }
                 }
                 return;
@@ -382,15 +386,18 @@ impl DriftPatchApp {
                 match preview {
                     Ok(text) => {
                         self.preview_text = text;
-                        self.status_message = format!(
-                            "リネームパッチ: {} → {}",
-                            patch.old_path.as_deref().unwrap_or("?"),
-                            patch.target_file
+                        self.status_message = tr_args(
+                            "gui.rename_preview",
+                            &[
+                                ("from", patch.old_path.as_deref().unwrap_or("?")),
+                                ("to", &patch.target_file),
+                            ],
                         );
                     }
                     Err(e) => {
                         self.preview_text = String::new();
-                        self.status_message = format!("プレビュー失敗: {}", e);
+                        self.status_message =
+                            tr_args("gui.preview_failed", &[("err", &e.to_string())]);
                     }
                 }
                 return;
@@ -401,12 +408,14 @@ impl DriftPatchApp {
         match apply_patch(&self.original_text, &patch, profile) {
             Ok(result) => {
                 self.preview_text = result;
-                self.status_message = "プレビュー更新完了".to_string();
+                self.status_message = tr("gui.preview_updated").to_string();
             }
             Err(ApplyError::NoMatch { hunk_index }) => {
                 self.preview_text = String::new();
-                self.status_message =
-                    format!("適用失敗: ハンク {} の対象箇所が見つかりません", hunk_index);
+                self.status_message = tr_args(
+                    "gui.apply_fail_no_match",
+                    &[("hunk", &hunk_index.to_string())],
+                );
             }
             Err(ApplyError::CountMismatch {
                 hunk_index,
@@ -415,16 +424,20 @@ impl DriftPatchApp {
                 ..
             }) => {
                 self.preview_text = String::new();
-                self.status_message = format!(
-                    "適用失敗: ハンク {} の期待マッチ数 {} と実際のマッチ数 {} が一致しません（ドリフト検出）。",
-                    hunk_index, expected, actual
+                self.status_message = tr_args(
+                    "gui.apply_fail_count",
+                    &[
+                        ("hunk", &hunk_index.to_string()),
+                        ("expected", &expected.to_string()),
+                        ("actual", &actual.to_string()),
+                    ],
                 );
             }
             Err(ApplyError::OverlappingMatches { hunk_index }) => {
                 self.preview_text = String::new();
-                self.status_message = format!(
-                    "適用失敗: ハンク {} の複数マッチの置換範囲が重なっています。",
-                    hunk_index
+                self.status_message = tr_args(
+                    "gui.apply_fail_overlap",
+                    &[("hunk", &hunk_index.to_string())],
                 );
             }
         }
@@ -453,8 +466,7 @@ impl DriftPatchApp {
             // リネームは旧・新の 2 パスが必要なため work_dir 基準で適用する
             let work_dir = self.settings.work_dir.trim().to_string();
             if work_dir.is_empty() {
-                self.status_message =
-                    "リネームパッチの適用には work_dir の設定が必要です".to_string();
+                self.status_message = tr("gui.rename_needs_workdir").to_string();
                 return;
             }
             let mut ws = PatchWorkspace::new(&work_dir);
@@ -464,13 +476,17 @@ impl DriftPatchApp {
                     let new_abs = std::path::Path::new(&work_dir)
                         .join(to.replace('/', std::path::MAIN_SEPARATOR_STR));
                     self.open_file(new_abs);
-                    self.status_message = format!("リネーム適用完了: {} → {}", from, to);
+                    self.status_message =
+                        tr_args("gui.rename_applied", &[("from", &from), ("to", &to)]);
                 }
                 Ok(action) => {
-                    self.status_message = format!("リネームパッチ: {}", action.describe(false));
+                    self.status_message = tr_args(
+                        "gui.rename_patch_status",
+                        &[("desc", &action.describe(false))],
+                    );
                 }
                 Err(e) => {
-                    self.status_message = format!("パッチ適用エラー: {}", e);
+                    self.status_message = tr_args("gui.apply_error", &[("err", &e.to_string())]);
                 }
             }
             return;
@@ -489,13 +505,15 @@ impl DriftPatchApp {
                 self.edited_text = result;
                 self.preview_text = String::new();
                 self.status_message = if self.settings.create_backup {
-                    format!(
-                        "パッチ適用完了: {} に保存、バックアップ: {}",
-                        file_path.display(),
-                        backup_path(file_path).display()
+                    tr_args(
+                        "gui.applied_with_backup",
+                        &[
+                            ("path", &file_path.display().to_string()),
+                            ("bak", &backup_path(file_path).display().to_string()),
+                        ],
                     )
                 } else {
-                    format!("パッチ適用完了: {} に保存", file_path.display())
+                    tr_args("gui.applied", &[("path", &file_path.display().to_string())])
                 };
             }
             Ok(PlannedAction::Delete) => {
@@ -505,20 +523,26 @@ impl DriftPatchApp {
                 self.edited_text = String::new();
                 self.preview_text = String::new();
                 self.status_message = if self.settings.create_backup {
-                    format!(
-                        "削除パッチ適用完了: {} を削除、バックアップ: {}",
-                        file_path.display(),
-                        backup_path(file_path).display()
+                    tr_args(
+                        "gui.delete_applied_with_backup",
+                        &[
+                            ("path", &file_path.display().to_string()),
+                            ("bak", &backup_path(file_path).display().to_string()),
+                        ],
                     )
                 } else {
-                    format!("削除パッチ適用完了: {} を削除", file_path.display())
+                    tr_args(
+                        "gui.delete_applied",
+                        &[("path", &file_path.display().to_string())],
+                    )
                 };
             }
             Ok(action) => {
-                self.status_message = format!("パッチ適用: {}", action.describe(false));
+                self.status_message =
+                    tr_args("gui.apply_status", &[("desc", &action.describe(false))]);
             }
             Err(e) => {
-                self.status_message = format!("パッチ適用エラー: {}", e);
+                self.status_message = tr_args("gui.apply_error", &[("err", &e.to_string())]);
             }
         }
     }
@@ -540,8 +564,7 @@ impl DriftPatchApp {
     /// Git コミット取り込みダイアログを開く
     pub fn open_git_import(&mut self) {
         let Some(repo_path) = self.resolve_git_repo_path() else {
-            self.status_message =
-                "Git リポジトリパスまたは work_dir が設定されていません".to_string();
+            self.status_message = tr("gui.git_repo_not_set").to_string();
             return;
         };
 
@@ -553,7 +576,7 @@ impl DriftPatchApp {
                 });
             }
             Err(e) => {
-                self.status_message = format!("Git 履歴読み込みエラー: {}", e);
+                self.status_message = tr_args("gui.git_history_error", &[("err", &e.to_string())]);
             }
         }
     }
@@ -562,15 +585,14 @@ impl DriftPatchApp {
     pub fn import_from_commit(&mut self, commit_sha: &str, description: &str) {
         let Some(repo_path) = self.resolve_git_repo_path() else {
             if let Some(ref mut dialog) = self.git_import_dialog {
-                dialog.error =
-                    Some("Git リポジトリパスまたは work_dir が設定されていません".to_string());
+                dialog.error = Some(tr("gui.git_repo_not_set").to_string());
             }
             return;
         };
 
         if self.settings.patch_repo_path.is_empty() {
             if let Some(ref mut dialog) = self.git_import_dialog {
-                dialog.error = Some("パッチリポジトリパスが設定されていません".to_string());
+                dialog.error = Some(tr("gui.repo_not_set").to_string());
             }
             return;
         }
@@ -578,7 +600,7 @@ impl DriftPatchApp {
         let work_dir = self.settings.work_dir.trim();
         if work_dir.is_empty() {
             if let Some(ref mut dialog) = self.git_import_dialog {
-                dialog.error = Some("work_dir が設定されていません".to_string());
+                dialog.error = Some(tr("gui.workdir_not_set").to_string());
             }
             return;
         }
@@ -614,16 +636,21 @@ impl DriftPatchApp {
 
                 let skipped_count = result.skipped.len();
                 let msg = if save_errors.is_empty() {
-                    format!(
-                        "Git 取り込み完了: {} 件保存, {} 件スキップ",
-                        saved, skipped_count
+                    tr_args(
+                        "gui.git_import_done",
+                        &[
+                            ("saved", &saved.to_string()),
+                            ("skipped", &skipped_count.to_string()),
+                        ],
                     )
                 } else {
-                    format!(
-                        "Git 取り込み: {} 件保存, {} 件スキップ, {} 件保存失敗",
-                        saved,
-                        skipped_count,
-                        save_errors.len()
+                    tr_args(
+                        "gui.git_import_partial",
+                        &[
+                            ("saved", &saved.to_string()),
+                            ("skipped", &skipped_count.to_string()),
+                            ("failed", &save_errors.len().to_string()),
+                        ],
                     )
                 };
                 self.status_message = msg.clone();
@@ -632,17 +659,24 @@ impl DriftPatchApp {
                     dialog.error = None;
                     let mut detail = msg;
                     if !result.skipped.is_empty() {
-                        detail.push_str("\n\nスキップ:");
+                        detail.push_str("\n\n");
+                        detail.push_str(tr("gui.git_import_skipped_header"));
                         for s in result.skipped.iter().take(10) {
                             detail.push_str(&format!("\n  {} — {}", s.path, s.reason));
                         }
                         if result.skipped.len() > 10 {
-                            detail
-                                .push_str(&format!("\n  ... 他 {} 件", result.skipped.len() - 10));
+                            detail.push_str(&format!(
+                                "\n  {}",
+                                tr_args(
+                                    "gui.git_import_more",
+                                    &[("count", &(result.skipped.len() - 10).to_string())]
+                                )
+                            ));
                         }
                     }
                     if !save_errors.is_empty() {
-                        detail.push_str("\n\n保存エラー:");
+                        detail.push_str("\n\n");
+                        detail.push_str(tr("gui.git_import_save_errors"));
                         for e in save_errors.iter().take(5) {
                             detail.push_str(&format!("\n  {}", e));
                         }
@@ -656,7 +690,7 @@ impl DriftPatchApp {
                     dialog.error = Some(e.to_string());
                     dialog.loading = false;
                 }
-                self.status_message = format!("Git 取り込みエラー: {}", e);
+                self.status_message = tr_args("gui.git_import_error", &[("err", &e.to_string())]);
             }
         }
     }
@@ -676,11 +710,11 @@ impl DriftPatchApp {
             Ok(()) => {
                 self.selected_patch = None;
                 self.preview_text = String::new();
-                self.status_message = format!("削除: {}", patch_path);
+                self.status_message = tr_args("gui.patch_deleted", &[("path", &patch_path)]);
                 self.reload_patches();
             }
             Err(e) => {
-                self.status_message = format!("削除エラー: {}", e);
+                self.status_message = tr_args("gui.patch_delete_error", &[("err", &e.to_string())]);
             }
         }
     }

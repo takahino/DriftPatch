@@ -1,4 +1,5 @@
 use crate::app::DriftPatchApp;
+use driftpatch::i18n::tr;
 use egui::Context;
 
 /// Git コミットからパッチを取り込むダイアログ
@@ -13,7 +14,7 @@ pub fn render_git_import_window(app: &mut DriftPatchApp, ctx: &Context) {
     let mut commit_sha = String::new();
     let mut description = String::new();
 
-    egui::Window::new("Git コミットからパッチ生成")
+    egui::Window::new(tr("gui.win_git_import"))
         .open(&mut open)
         .resizable(true)
         .default_width(560.0)
@@ -21,19 +22,19 @@ pub fn render_git_import_window(app: &mut DriftPatchApp, ctx: &Context) {
         .show(ctx, |ui| {
             let dialog = app.git_import_dialog.as_mut().unwrap();
 
-            ui.label("コミットを選択するか、SHA / ref を直接入力してください。");
+            ui.label(tr("gui.git_select_hint"));
 
             ui.separator();
 
-            ui.label("コミット SHA / ref:");
+            ui.label(tr("gui.git_sha_label"));
             ui.text_edit_singleline(&mut dialog.commit_input);
 
-            ui.label("説明（空欄の場合はコミットメッセージを使用）:");
+            ui.label(tr("gui.git_desc_label"));
             ui.text_edit_singleline(&mut dialog.description);
 
             ui.separator();
 
-            ui.strong("最近のコミット:");
+            ui.strong(tr("gui.git_recent"));
             egui::ScrollArea::vertical()
                 .id_salt("git_commit_list")
                 .max_height(200.0)
@@ -65,12 +66,12 @@ pub fn render_git_import_window(app: &mut DriftPatchApp, ctx: &Context) {
             ui.separator();
 
             ui.horizontal(|ui| {
-                if ui.button("生成").clicked() {
+                if ui.button(tr("gui.btn_do_generate")).clicked() {
                     do_import = true;
                     commit_sha = dialog.commit_input.clone();
                     description = dialog.description.clone();
                 }
-                if ui.button("キャンセル").clicked() {
+                if ui.button(tr("gui.btn_cancel")).clicked() {
                     close = true;
                 }
             });
@@ -84,7 +85,7 @@ pub fn render_git_import_window(app: &mut DriftPatchApp, ctx: &Context) {
     if do_import {
         if commit_sha.trim().is_empty() {
             if let Some(ref mut dialog) = app.git_import_dialog {
-                dialog.error = Some("コミット SHA を指定してください".to_string());
+                dialog.error = Some(tr("gui.git_sha_required").to_string());
             }
             return;
         }
