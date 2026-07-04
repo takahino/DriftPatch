@@ -60,8 +60,7 @@ pub fn render_settings_window(app: &mut DriftPatchApp, ctx: &egui::Context) {
                                 .set_title("work ディレクトリを選択")
                                 .pick_folder()
                             {
-                                app.settings.work_dir =
-                                    path.to_str().unwrap_or("").to_string();
+                                app.settings.work_dir = path.to_str().unwrap_or("").to_string();
                             }
                         }
                     });

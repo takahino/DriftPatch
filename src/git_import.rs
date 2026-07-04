@@ -460,7 +460,8 @@ fn split_patch_by_hunks(mut patch: PatchFile) -> Vec<SplitPatch> {
         return vec![SplitPatch { patch, filename }];
     }
 
-    hunks.into_iter()
+    hunks
+        .into_iter()
         .enumerate()
         .map(|(i, hunk)| {
             let suffix = format!("-h{}", i + 1);
@@ -608,9 +609,7 @@ fn read_blob_from_tree(
 }
 
 fn is_binary_content(bytes: Option<&[u8]>) -> bool {
-    bytes
-        .map(|b| b.contains(&0))
-        .unwrap_or(false)
+    bytes.map(|b| b.contains(&0)).unwrap_or(false)
 }
 
 fn canonicalize_or_self(path: &Path) -> Result<PathBuf, GitError> {
@@ -647,10 +646,7 @@ fn to_work_dir_relative(work_dir: &Path, git_path: &str) -> Result<String, Strin
         .strip_prefix(&work_canon)
         .map_err(|_| format!("対象ファイルが work_dir 配下にありません: {}", git_path))?;
 
-    Ok(rel
-        .to_str()
-        .unwrap_or("")
-        .replace('\\', "/"))
+    Ok(rel.to_str().unwrap_or("").replace('\\', "/"))
 }
 
 #[cfg(test)]
@@ -668,11 +664,7 @@ mod tests {
         // 初回コミット
         let file1 = tmp.join("src").join("Foo.java");
         fs::create_dir_all(file1.parent().unwrap()).unwrap();
-        fs::write(
-            &file1,
-            "class Foo {\n    void a() {}\n    void b() {}\n}\n",
-        )
-        .unwrap();
+        fs::write(&file1, "class Foo {\n    void a() {}\n    void b() {}\n}\n").unwrap();
         let file2 = tmp.join("src").join("Bar.java");
         fs::write(&file2, "class Bar {}\n").unwrap();
 
@@ -705,15 +697,8 @@ mod tests {
         let sig = Signature::now("tester", "test@example.com").unwrap();
         let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
         let oid = if let Some(parent) = parent {
-            repo.commit(
-                Some("HEAD"),
-                &sig,
-                &sig,
-                message,
-                &tree,
-                &[&parent],
-            )
-            .unwrap()
+            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent])
+                .unwrap()
         } else {
             repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[])
                 .unwrap()
@@ -897,7 +882,12 @@ mod tests {
         .unwrap();
 
         // Delete+Create の 2 パッチではなく 1 つの Rename パッチになること
-        assert_eq!(result.generated.len(), 1, "generated: {:?}", result.generated);
+        assert_eq!(
+            result.generated.len(),
+            1,
+            "generated: {:?}",
+            result.generated
+        );
         let item = &result.generated[0];
         assert_eq!(item.patch.kind, PatchKind::Rename);
         assert_eq!(item.target_file, "src/NewName.java");
@@ -937,11 +927,19 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result.generated.len(), 1, "generated: {:?}", result.generated);
+        assert_eq!(
+            result.generated.len(),
+            1,
+            "generated: {:?}",
+            result.generated
+        );
         let item = &result.generated[0];
         assert_eq!(item.patch.kind, PatchKind::Rename);
         assert_eq!(item.patch.old_path.as_deref(), Some("src/BeforeEdit.java"));
-        assert!(!item.patch.hunks.is_empty(), "編集ありリネームはハンクを持つこと");
+        assert!(
+            !item.patch.hunks.is_empty(),
+            "編集ありリネームはハンクを持つこと"
+        );
         // -h 分割されないこと
         assert!(!item.filename.contains("-h"), "filename: {}", item.filename);
         assert!(item.patch.validate().is_ok());

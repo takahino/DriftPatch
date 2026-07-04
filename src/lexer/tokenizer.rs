@@ -94,7 +94,11 @@ impl<'a> GenericTokenizer<'a> {
                     i += 1;
                 }
                 let text: String = chars[start..i].iter().collect();
-                tokens.push(Token::with_start(TokenKind::Whitespace, text.clone(), byte_pos));
+                tokens.push(Token::with_start(
+                    TokenKind::Whitespace,
+                    text.clone(),
+                    byte_pos,
+                ));
                 byte_pos += text.len();
                 continue;
             }
@@ -256,7 +260,10 @@ mod tests {
         assert_eq!(tokens[0].start, 0);
         assert_eq!(tokens[0].text, "int");
         assert_eq!(tokens[0].byte_end(), 3);
-        let newline = tokens.iter().find(|t| t.kind == TokenKind::Newline).unwrap();
+        let newline = tokens
+            .iter()
+            .find(|t| t.kind == TokenKind::Newline)
+            .unwrap();
         assert_eq!(newline.start, 6);
         assert_eq!(newline.text, "\n");
     }
@@ -293,8 +300,16 @@ mod tests {
         // 空白が混在しても meaningful tokens は同じ
         let tokens1 = tokenizer.tokenize("int x=1;");
         let tokens2 = tokenizer.tokenize("int  x  =  1 ;");
-        let sig1: Vec<&str> = tokens1.iter().filter(|t| t.is_significant()).map(|t| t.text.as_str()).collect();
-        let sig2: Vec<&str> = tokens2.iter().filter(|t| t.is_significant()).map(|t| t.text.as_str()).collect();
+        let sig1: Vec<&str> = tokens1
+            .iter()
+            .filter(|t| t.is_significant())
+            .map(|t| t.text.as_str())
+            .collect();
+        let sig2: Vec<&str> = tokens2
+            .iter()
+            .filter(|t| t.is_significant())
+            .map(|t| t.text.as_str())
+            .collect();
         assert_eq!(sig1, sig2);
     }
 }

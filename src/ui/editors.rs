@@ -18,8 +18,7 @@ pub fn render_editors(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
     let syntax = lang_to_syntax(app.language);
     let theme = ColorTheme::GITHUB_DARK;
 
-    let (removed_ranges, added_ranges) =
-        inline_diff(&app.original_text, &app.edited_text);
+    let (removed_ranges, added_ranges) = inline_diff(&app.original_text, &app.edited_text);
     let (_, preview_ranges) = if app.preview_text.is_empty() {
         (Vec::new(), Vec::new())
     } else {
@@ -56,20 +55,21 @@ pub fn render_editors(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
         ui.allocate_ui(egui::vec2(col_width, available.y), |ui| {
             ui.vertical(|ui| {
                 ui.label("修正画面（編集可）");
-                let scroll_resp = egui::ScrollArea::vertical()
-                    .id_salt("editor_center")
-                    .show(ui, |ui| {
-                        diff_editor::show(
-                            ui,
-                            "code_center",
-                            &mut app.edited_text,
-                            &syntax,
-                            theme,
-                            &added_ranges,
-                            ADDED_COLOR,
-                            true,
-                        );
-                    });
+                let scroll_resp =
+                    egui::ScrollArea::vertical()
+                        .id_salt("editor_center")
+                        .show(ui, |ui| {
+                            diff_editor::show(
+                                ui,
+                                "code_center",
+                                &mut app.edited_text,
+                                &syntax,
+                                theme,
+                                &added_ranges,
+                                ADDED_COLOR,
+                                true,
+                            );
+                        });
                 app.scroll_offset = scroll_resp.state.offset.y;
             });
         });

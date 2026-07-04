@@ -18,11 +18,9 @@ pub fn render(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
     git_import_window::render_git_import_window(app, &ctx);
 
     // ツールバー（上部パネル）
-    egui::Panel::top("toolbar")
-        .resizable(false)
-        .show(ui, |ui| {
-            toolbar::render_toolbar(app, &ctx, ui);
-        });
+    egui::Panel::top("toolbar").resizable(false).show(ui, |ui| {
+        toolbar::render_toolbar(app, &ctx, ui);
+    });
 
     // ステータスバー（最下部）
     egui::Panel::bottom("status_bar")

@@ -6,9 +6,7 @@ use crate::git_import::generate_patches_from_commit;
 use crate::patch::context::ContextConfig;
 use crate::patch::repository::PatchRepository;
 
-use super::report::{
-    write_html_report, write_xlsx_report, BatchReport, ReportRow, ReportSummary,
-};
+use super::report::{write_html_report, write_xlsx_report, BatchReport, ReportRow, ReportSummary};
 
 #[derive(Debug, Clone)]
 pub struct FromCommitConfig {
@@ -185,15 +183,8 @@ mod tests {
         let sig = Signature::now("tester", "test@example.com").unwrap();
         let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
         if let Some(parent) = parent {
-            repo.commit(
-                Some("HEAD"),
-                &sig,
-                &sig,
-                message,
-                &tree,
-                &[&parent],
-            )
-            .unwrap()
+            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent])
+                .unwrap()
         } else {
             repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[])
                 .unwrap()

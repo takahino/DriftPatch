@@ -155,8 +155,8 @@ pub fn find_patch_matches(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lexer::{GenericTokenizer, profiles::JAVA, Token};
     use crate::lexer::token::TokenKind;
+    use crate::lexer::{profiles::JAVA, GenericTokenizer, Token};
 
     fn tok(text: &str) -> Token {
         Token::new(TokenKind::Code, text)

@@ -49,12 +49,7 @@ pub fn write_xlsx_report(report: &BatchReport, path: &Path) -> Result<(), String
     // dry-run 時は先頭にバナー行を入れてデータ行を 1 行下げる
     let data_start: u32 = if report.dry_run {
         worksheet
-            .write_string_with_format(
-                0,
-                0,
-                "DRY-RUN（ファイルは変更されていません）",
-                &header,
-            )
+            .write_string_with_format(0, 0, "DRY-RUN（ファイルは変更されていません）", &header)
             .map_err(|e| e.to_string())?;
         1
     } else {
@@ -105,7 +100,9 @@ pub fn write_xlsx_report(report: &BatchReport, path: &Path) -> Result<(), String
                 .write_number(r, 6, hunk as f64)
                 .map_err(|e| e.to_string())?;
         } else {
-            worksheet.write_string(r, 6, "").map_err(|e| e.to_string())?;
+            worksheet
+                .write_string(r, 6, "")
+                .map_err(|e| e.to_string())?;
         }
         worksheet
             .write_string(r, 7, &row.message)
@@ -162,9 +159,18 @@ pub fn write_html_report(report: &BatchReport, path: &Path) -> Result<(), String
         );
     }
     html.push_str("<div class=\"summary\">\n");
-    html.push_str(&format!("<p><strong>work_dir:</strong> {}</p>\n", html_escape(&report.work_dir)));
-    html.push_str(&format!("<p><strong>patch_dir:</strong> {}</p>\n", html_escape(&report.patch_dir)));
-    html.push_str(&format!("<p><strong>開始:</strong> {} / <strong>終了:</strong> {}</p>\n", report.started_at, report.finished_at));
+    html.push_str(&format!(
+        "<p><strong>work_dir:</strong> {}</p>\n",
+        html_escape(&report.work_dir)
+    ));
+    html.push_str(&format!(
+        "<p><strong>patch_dir:</strong> {}</p>\n",
+        html_escape(&report.patch_dir)
+    ));
+    html.push_str(&format!(
+        "<p><strong>開始:</strong> {} / <strong>終了:</strong> {}</p>\n",
+        report.started_at, report.finished_at
+    ));
     html.push_str(&format!(
         "<p><strong>合計:</strong> {} / <strong>成功:</strong> {} / <strong>失敗:</strong> {}</p>\n",
         report.summary.total, report.summary.success, report.summary.failed
@@ -292,7 +298,10 @@ mod report_tests {
         assert!(html_text.contains("src/Foo.java/a.dpatch"));
         assert!(html_text.contains("failed"));
         assert!(html_text.contains("<th>操作</th>"));
-        assert!(!html_text.contains("DRY-RUN"), "非 dry-run ではバナーを出さない");
+        assert!(
+            !html_text.contains("DRY-RUN"),
+            "非 dry-run ではバナーを出さない"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

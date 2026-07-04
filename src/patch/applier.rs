@@ -72,10 +72,17 @@ fn apply_hunk(
     let tokens = tokenizer.tokenize(text);
     let sig: Vec<&Token> = tokens.iter().filter(|t| t.is_significant()).collect();
 
-    let matches = find_patch_matches(&sig, &hunk.context_before, &hunk.removed, &hunk.context_after);
+    let matches = find_patch_matches(
+        &sig,
+        &hunk.context_before,
+        &hunk.removed,
+        &hunk.context_after,
+    );
 
     if matches.is_empty() {
-        return Err(ApplyError::NoMatch { hunk_index: hunk_idx });
+        return Err(ApplyError::NoMatch {
+            hunk_index: hunk_idx,
+        });
     }
 
     if matches.len() != hunk.count {
@@ -115,7 +122,9 @@ fn apply_hunk(
     ranges.sort_by_key(|&(start, _)| start);
     for window in ranges.windows(2) {
         if window[0].1 > window[1].0 {
-            return Err(ApplyError::OverlappingMatches { hunk_index: hunk_idx });
+            return Err(ApplyError::OverlappingMatches {
+                hunk_index: hunk_idx,
+            });
         }
     }
 
@@ -181,18 +190,23 @@ mod tests {
         let edit = "void foo() {\n    Objects.requireNonNull(bar);\n    return null;\n}\n";
         let config = ContextConfig::default();
 
-        let patch = generate_patch(orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config).unwrap();
+        let patch = generate_patch(
+            orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config,
+        )
+        .unwrap();
         let result = apply_patch(orig, &patch, &JAVA).unwrap();
 
         // 適用後は edited と同じ significant tokens を持つはず
         use crate::lexer::GenericTokenizer;
         let tokenizer = GenericTokenizer::new(&JAVA);
-        let result_sig: Vec<String> = tokenizer.tokenize(&result)
+        let result_sig: Vec<String> = tokenizer
+            .tokenize(&result)
             .into_iter()
             .filter(|t| t.is_significant())
             .map(|t| t.text.clone())
             .collect();
-        let edit_sig: Vec<String> = tokenizer.tokenize(edit)
+        let edit_sig: Vec<String> = tokenizer
+            .tokenize(edit)
             .into_iter()
             .filter(|t| t.is_significant())
             .map(|t| t.text.clone())
@@ -207,7 +221,10 @@ mod tests {
         let edit = "void foo() {\n    Objects.requireNonNull(bar);\n    return null;\n}\n";
         let config = ContextConfig::default();
 
-        let patch = generate_patch(orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config).unwrap();
+        let patch = generate_patch(
+            orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config,
+        )
+        .unwrap();
         let result = apply_patch(orig, &patch, &JAVA).unwrap();
 
         assert_eq!(result, edit);
@@ -219,7 +236,10 @@ mod tests {
         let edit = "void foo() {\n\tObjects.requireNonNull(bar);\n\treturn null;\n}\n";
         let config = ContextConfig::default();
 
-        let patch = generate_patch(orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config).unwrap();
+        let patch = generate_patch(
+            orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config,
+        )
+        .unwrap();
         let result = apply_patch(orig, &patch, &JAVA).unwrap();
 
         assert_eq!(result, edit);
@@ -231,7 +251,10 @@ mod tests {
         let orig = "void foo() {\n    return null;\n}\n";
         let edit = "void foo() {\n    Objects.requireNonNull(bar);\n    return null;\n}\n";
         let config = ContextConfig::default();
-        let patch = generate_patch(orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config).unwrap();
+        let patch = generate_patch(
+            orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config,
+        )
+        .unwrap();
 
         // 行が追加された状態に適用
         let shifted = "// added line\nvoid foo() {\n    return null;\n}\n";
@@ -272,10 +295,7 @@ mod tests {
         };
 
         let result = apply_patch(orig, &patch, &JAVA).unwrap();
-        assert_eq!(
-            result,
-            "void foo() { return 0; } void bar() { return 0; }"
-        );
+        assert_eq!(result, "void foo() { return 0; } void bar() { return 0; }");
     }
 
     #[test]
@@ -327,7 +347,10 @@ mod tests {
         let orig = "int x = 1; // old\n";
         let edit = "int x = 2; // new\n";
         let config = ContextConfig::default();
-        let patch = generate_patch(orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config).unwrap();
+        let patch = generate_patch(
+            orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config,
+        )
+        .unwrap();
 
         let result = apply_patch(orig, &patch, &JAVA).unwrap();
         assert_eq!(result, edit);
@@ -339,7 +362,10 @@ mod tests {
         let orig = "return /* c */ null;\n";
         let edit = "return null;\n";
         let config = ContextConfig::default();
-        let patch = generate_patch(orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config).unwrap();
+        let patch = generate_patch(
+            orig, edit, &JAVA, "tester", "test", "Foo.java", "UTF-8", &config,
+        )
+        .unwrap();
 
         let result = apply_patch(orig, &patch, &JAVA).unwrap();
         assert_eq!(result, edit);

@@ -74,10 +74,8 @@ pub fn render_patch_panel(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
 
                     for (patch_path, patch) in &visible_patches {
                         let selected = app.selected_patch.as_deref() == Some(patch_path.as_str());
-                        let display_name = patch_path
-                            .rsplit('/')
-                            .next()
-                            .unwrap_or(patch_path.as_str());
+                        let display_name =
+                            patch_path.rsplit('/').next().unwrap_or(patch_path.as_str());
                         let resp = ui.selectable_label(selected, display_name);
                         if resp.clicked() {
                             new_selection = Some(patch_path.clone());

@@ -63,15 +63,14 @@ impl PatchRepository {
 
     /// target_file 配下の保存ディレクトリを返す
     fn target_dir(&self, target_file: &str) -> PathBuf {
-        self.patches_dir().join(normalize_path_separators(target_file))
+        self.patches_dir()
+            .join(normalize_path_separators(target_file))
     }
 
     /// パッチを保存する。`patches/<target_file>/<filename>` に配置する。
     pub fn save(&self, patch: &PatchFile, filename: &str) -> Result<PathBuf, RepoError> {
         if patch.target_file.is_empty() {
-            return Err(RepoError::InvalidPath(
-                "target_file が空です".to_string(),
-            ));
+            return Err(RepoError::InvalidPath("target_file が空です".to_string()));
         }
         // 不正なパッチ（例: verify_tokens のない削除パッチ）の保存を防ぐ
         patch.validate().map_err(RepoError::InvalidPatch)?;
@@ -115,7 +114,9 @@ impl PatchRepository {
 
     /// パッチを削除する。`relative_path` は patches/ からの相対パス。
     pub fn delete(&self, relative_path: &str) -> Result<(), RepoError> {
-        let path = self.patches_dir().join(relative_path.replace('/', std::path::MAIN_SEPARATOR_STR));
+        let path = self
+            .patches_dir()
+            .join(relative_path.replace('/', std::path::MAIN_SEPARATOR_STR));
         if path.exists() {
             fs::remove_file(&path)?;
         }
@@ -208,8 +209,7 @@ mod tests {
         let repo = PatchRepository::new(&tmp);
         let patch = dummy_patch("src/Foo.java");
 
-        repo.save(&patch, "20260628-test-abc12345.dpatch")
-            .unwrap();
+        repo.save(&patch, "20260628-test-abc12345.dpatch").unwrap();
         let list = repo.list().unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].0, "src/Foo.java/20260628-test-abc12345.dpatch");

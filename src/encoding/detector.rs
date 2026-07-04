@@ -26,8 +26,7 @@ pub fn decode_bytes(bytes: &[u8]) -> (String, String) {
 /// encoding_name が不明な場合は UTF-8 にフォールバックする。
 #[allow(dead_code)]
 pub fn encode_text(text: &str, encoding_name: &str) -> Vec<u8> {
-    let encoding = Encoding::for_label(encoding_name.as_bytes())
-        .unwrap_or(encoding_rs::UTF_8);
+    let encoding = Encoding::for_label(encoding_name.as_bytes()).unwrap_or(encoding_rs::UTF_8);
     let (encoded, _, _) = encoding.encode(text);
     encoded.into_owned()
 }
@@ -86,7 +85,8 @@ mod tests {
 
     #[test]
     fn test_write_file_auto_preserves_utf8_bom() {
-        let path = std::env::temp_dir().join(format!("driftpatch_bom_{}.txt", uuid::Uuid::new_v4()));
+        let path =
+            std::env::temp_dir().join(format!("driftpatch_bom_{}.txt", uuid::Uuid::new_v4()));
         write_file_auto(&path, "abc", "UTF-8 BOM").unwrap();
         let bytes = std::fs::read(&path).unwrap();
         assert_eq!(&bytes[..3], b"\xef\xbb\xbf");

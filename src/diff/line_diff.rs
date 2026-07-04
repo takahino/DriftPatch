@@ -11,10 +11,14 @@ pub fn inline_diff(a: &str, b: &str) -> (Vec<(usize, usize)>, Vec<(usize, usize)
     for op in diff.ops() {
         match op {
             DiffOp::Equal { .. } => {}
-            DiffOp::Delete { old_index, old_len, .. } => {
+            DiffOp::Delete {
+                old_index, old_len, ..
+            } => {
                 a_ranges.push(line_range(a, &a_starts, *old_index, *old_index + *old_len));
             }
-            DiffOp::Insert { new_index, new_len, .. } => {
+            DiffOp::Insert {
+                new_index, new_len, ..
+            } => {
                 b_ranges.push(line_range(b, &b_starts, *new_index, *new_index + *new_len));
             }
             DiffOp::Replace {

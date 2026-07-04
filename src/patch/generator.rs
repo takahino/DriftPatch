@@ -1,4 +1,4 @@
-use crate::diff::token_diff::{diff_tokens, DiffTag, extract_significant};
+use crate::diff::token_diff::{diff_tokens, extract_significant, DiffTag};
 use crate::lexer::{GenericTokenizer, LanguageProfile, Token};
 use crate::patch::context::{find_patch_matches, ContextConfig, CONTEXT_STEPS};
 use crate::patch::model::{DiffHunk, PatchFile, PatchKind, PATCH_FORMAT_VERSION};
@@ -8,18 +8,18 @@ use crate::patch::name_gen::generate_patch_id;
 pub enum GeneratorError {
     NoDiff,
     /// パッチ生成時にマッチ箇所が見つからなかった
-    NoMatch { hunk_index: usize },
+    NoMatch {
+        hunk_index: usize,
+    },
 }
 
 impl std::fmt::Display for GeneratorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             GeneratorError::NoDiff => write!(f, "変更が見つかりませんでした"),
-            GeneratorError::NoMatch { hunk_index } => write!(
-                f,
-                "ハンク {} の適用箇所が見つかりませんでした",
-                hunk_index
-            ),
+            GeneratorError::NoMatch { hunk_index } => {
+                write!(f, "ハンク {} の適用箇所が見つかりませんでした", hunk_index)
+            }
         }
     }
 }
@@ -69,7 +69,11 @@ pub fn generate_patch(
 
     let mut hunks = Vec::new();
     for (hunk_idx, raw) in hunks_raw.iter().enumerate() {
-        let removed: Vec<Token> = raw.removed.iter().map(|&i| (*orig_sig[i]).clone()).collect();
+        let removed: Vec<Token> = raw
+            .removed
+            .iter()
+            .map(|&i| (*orig_sig[i]).clone())
+            .collect();
 
         let change_start = raw.orig_start;
         let change_end = raw.orig_end;
@@ -108,8 +112,7 @@ pub fn generate_patch(
                 .map(|t| (*t).clone())
                 .collect();
 
-            let matches =
-                find_patch_matches(&orig_sig, &ctx_before, &removed, &ctx_after);
+            let matches = find_patch_matches(&orig_sig, &ctx_before, &removed, &ctx_after);
             let match_count = matches.len();
 
             if match_count == 0 {
@@ -141,7 +144,9 @@ pub fn generate_patch(
         if let Some(hunk) = found_hunk {
             hunks.push(hunk);
         } else {
-            return Err(GeneratorError::NoMatch { hunk_index: hunk_idx });
+            return Err(GeneratorError::NoMatch {
+                hunk_index: hunk_idx,
+            });
         }
     }
 
@@ -189,10 +194,11 @@ fn group_hunks(
             DiffTag::Equal => {
                 // 変更ブロックが終わった: フラッシュ
                 if !current_removed.is_empty() || current_has_insert {
-                    let orig_start = current_removed.first().copied()
+                    let orig_start = current_removed
+                        .first()
+                        .copied()
                         .unwrap_or(next_orig_after_equal);
-                    let orig_end = current_removed.last().map(|&i| i + 1)
-                        .unwrap_or(orig_start);
+                    let orig_end = current_removed.last().map(|&i| i + 1).unwrap_or(orig_start);
                     hunks.push(RawHunk {
                         orig_start,
                         orig_end,
@@ -210,10 +216,11 @@ fn group_hunks(
     }
     // 末尾の未フラッシュ分
     if !current_removed.is_empty() || current_has_insert {
-        let orig_start = current_removed.first().copied()
+        let orig_start = current_removed
+            .first()
+            .copied()
             .unwrap_or(next_orig_after_equal);
-        let orig_end = current_removed.last().map(|&i| i + 1)
-            .unwrap_or(orig_start);
+        let orig_end = current_removed.last().map(|&i| i + 1).unwrap_or(orig_start);
         hunks.push(RawHunk {
             orig_start,
             orig_end,
@@ -298,7 +305,16 @@ mod tests {
         let orig = "void foo() {\n    return null;\n}\n";
         let edit = "void foo() {\n    Objects.requireNonNull(bar);\n    return null;\n}\n";
         let config = ContextConfig::default();
-        let result = generate_patch(orig, edit, &JAVA, "tester", "テスト", "Foo.java", "UTF-8", &config);
+        let result = generate_patch(
+            orig,
+            edit,
+            &JAVA,
+            "tester",
+            "テスト",
+            "Foo.java",
+            "UTF-8",
+            &config,
+        );
         assert!(result.is_ok(), "パッチ生成失敗: {:?}", result);
         let patch = result.unwrap();
         assert!(!patch.hunks.is_empty());
@@ -311,7 +327,16 @@ mod tests {
     fn test_generate_patch_no_diff() {
         let orig = "int x = 1;";
         let config = ContextConfig::default();
-        let result = generate_patch(orig, orig, &JAVA, "tester", "テスト", "Foo.java", "UTF-8", &config);
+        let result = generate_patch(
+            orig,
+            orig,
+            &JAVA,
+            "tester",
+            "テスト",
+            "Foo.java",
+            "UTF-8",
+            &config,
+        );
         assert!(matches!(result, Err(GeneratorError::NoDiff)));
     }
 
@@ -320,7 +345,17 @@ mod tests {
         let orig = "void foo() {\n    return null;\n}\n";
         let edit = "void foo() {\n    Objects.requireNonNull(bar);\n    return null;\n}\n";
         let config = ContextConfig::default();
-        let patch = generate_patch(orig, edit, &JAVA, "tester", "テスト", "Foo.java", "UTF-8", &config).unwrap();
+        let patch = generate_patch(
+            orig,
+            edit,
+            &JAVA,
+            "tester",
+            "テスト",
+            "Foo.java",
+            "UTF-8",
+            &config,
+        )
+        .unwrap();
         assert_eq!(patch.hunks[0].count, 1);
     }
 
@@ -330,7 +365,17 @@ mod tests {
         let orig = "void foo() { return null; } void bar() { return null; }";
         let edit = "void foo() { return 0; } void bar() { return 0; }";
         let config = ContextConfig::default();
-        let patch = generate_patch(orig, edit, &JAVA, "tester", "テスト", "Foo.java", "UTF-8", &config).unwrap();
+        let patch = generate_patch(
+            orig,
+            edit,
+            &JAVA,
+            "tester",
+            "テスト",
+            "Foo.java",
+            "UTF-8",
+            &config,
+        )
+        .unwrap();
         // 2つのハンクに分かれるか、1ハンクで count=2 になるかは diff のグルーピング次第
         let total_count: usize = patch.hunks.iter().map(|h| h.count).sum();
         assert_eq!(total_count, 2, "2箇所の変更がカバーされること");
@@ -342,7 +387,16 @@ mod tests {
         let orig = "int x = 1; // old\n";
         let edit = "int x = 1; // new\n";
         let config = ContextConfig::default();
-        let result = generate_patch(orig, edit, &JAVA, "tester", "テスト", "Foo.java", "UTF-8", &config);
+        let result = generate_patch(
+            orig,
+            edit,
+            &JAVA,
+            "tester",
+            "テスト",
+            "Foo.java",
+            "UTF-8",
+            &config,
+        );
         assert!(result.is_ok(), "コメント変更のパッチ生成失敗: {:?}", result);
         let patch = result.unwrap();
         assert!(!patch.hunks.is_empty());
@@ -352,8 +406,16 @@ mod tests {
             .hunks
             .iter()
             .any(|h| h.removed.iter().any(|t| t.text.contains("// old")));
-        assert!(added_has_new, "added_text に // new が含まれること: {:?}", patch.hunks);
-        assert!(removed_has_old, "removed に // old が含まれること: {:?}", patch.hunks);
+        assert!(
+            added_has_new,
+            "added_text に // new が含まれること: {:?}",
+            patch.hunks
+        );
+        assert!(
+            removed_has_old,
+            "removed に // old が含まれること: {:?}",
+            patch.hunks
+        );
     }
 
     #[test]
@@ -362,13 +424,26 @@ mod tests {
         let orig = "return /* c */ null;\n";
         let edit = "return null;\n";
         let config = ContextConfig::default();
-        let result = generate_patch(orig, edit, &JAVA, "tester", "テスト", "Foo.java", "UTF-8", &config);
+        let result = generate_patch(
+            orig,
+            edit,
+            &JAVA,
+            "tester",
+            "テスト",
+            "Foo.java",
+            "UTF-8",
+            &config,
+        );
         assert!(result.is_ok(), "コメント削除のパッチ生成失敗: {:?}", result);
         let patch = result.unwrap();
         let removed_has_comment = patch
             .hunks
             .iter()
             .any(|h| h.removed.iter().any(|t| t.text.contains("/* c */")));
-        assert!(removed_has_comment, "removed にブロックコメントが含まれること: {:?}", patch.hunks);
+        assert!(
+            removed_has_comment,
+            "removed にブロックコメントが含まれること: {:?}",
+            patch.hunks
+        );
     }
 }

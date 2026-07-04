@@ -1,5 +1,5 @@
-use similar::{ChangeTag, TextDiff};
 use crate::lexer::Token;
+use similar::{ChangeTag, TextDiff};
 
 /// significant tokens（CODE + STRING_LITERAL + コメント）のみを取り出す
 pub fn extract_significant(tokens: &[Token]) -> Vec<&Token> {
@@ -11,10 +11,7 @@ pub fn extract_significant(tokens: &[Token]) -> Vec<&Token> {
 ///   removed_indices_in_a: a の significant tokens のうち削除されたインデックス
 ///   added_indices_in_b  : b の significant tokens のうち追加されたインデックス
 #[allow(dead_code)]
-pub fn diff_significant(
-    a_tokens: &[Token],
-    b_tokens: &[Token],
-) -> (Vec<usize>, Vec<usize>) {
+pub fn diff_significant(a_tokens: &[Token], b_tokens: &[Token]) -> (Vec<usize>, Vec<usize>) {
     let a_sig: Vec<&Token> = extract_significant(a_tokens);
     let b_sig: Vec<&Token> = extract_significant(b_tokens);
 
@@ -35,7 +32,11 @@ pub fn diff_significant(
 
     for change in diff.iter_all_changes() {
         // \x00 区切りでトークンの境界を数える
-        let count = change.value().split('\x00').filter(|s| !s.is_empty()).count();
+        let count = change
+            .value()
+            .split('\x00')
+            .filter(|s| !s.is_empty())
+            .count();
         match change.tag() {
             ChangeTag::Delete => {
                 for k in 0..count {
@@ -99,7 +100,11 @@ fn lcs_diff(a: &[&str], b: &[&str]) -> Vec<DiffOp> {
 
     for op in ops {
         match op {
-            similar::DiffOp::Equal { old_index, new_index, len } => {
+            similar::DiffOp::Equal {
+                old_index,
+                new_index,
+                len,
+            } => {
                 for k in 0..len {
                     result.push(DiffOp {
                         tag: DiffTag::Equal,
@@ -108,7 +113,9 @@ fn lcs_diff(a: &[&str], b: &[&str]) -> Vec<DiffOp> {
                     });
                 }
             }
-            similar::DiffOp::Delete { old_index, old_len, .. } => {
+            similar::DiffOp::Delete {
+                old_index, old_len, ..
+            } => {
                 for k in 0..old_len {
                     result.push(DiffOp {
                         tag: DiffTag::Delete,
@@ -117,7 +124,9 @@ fn lcs_diff(a: &[&str], b: &[&str]) -> Vec<DiffOp> {
                     });
                 }
             }
-            similar::DiffOp::Insert { new_index, new_len, .. } => {
+            similar::DiffOp::Insert {
+                new_index, new_len, ..
+            } => {
                 for k in 0..new_len {
                     result.push(DiffOp {
                         tag: DiffTag::Insert,
@@ -126,7 +135,12 @@ fn lcs_diff(a: &[&str], b: &[&str]) -> Vec<DiffOp> {
                     });
                 }
             }
-            similar::DiffOp::Replace { old_index, old_len, new_index, new_len } => {
+            similar::DiffOp::Replace {
+                old_index,
+                old_len,
+                new_index,
+                new_len,
+            } => {
                 for k in 0..old_len {
                     result.push(DiffOp {
                         tag: DiffTag::Delete,
@@ -151,7 +165,7 @@ fn lcs_diff(a: &[&str], b: &[&str]) -> Vec<DiffOp> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lexer::{GenericTokenizer, profiles::JAVA};
+    use crate::lexer::{profiles::JAVA, GenericTokenizer};
 
     fn tokenize(src: &str) -> Vec<Token> {
         GenericTokenizer::new(&JAVA).tokenize(src)

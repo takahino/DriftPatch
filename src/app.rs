@@ -264,7 +264,9 @@ impl DriftPatchApp {
         };
 
         if self.settings.patch_repo_path.is_empty() {
-            return Err("パッチリポジトリパスが設定されていません（設定を確認してください）".to_string());
+            return Err(
+                "パッチリポジトリパスが設定されていません（設定を確認してください）".to_string(),
+            );
         }
 
         let target_file = self.target_file_relative(file_path)?;
@@ -325,7 +327,8 @@ impl DriftPatchApp {
         };
         if !applies_to_open_file {
             self.preview_text = String::new();
-            self.status_message = "選択したパッチは現在開いているファイル向けではありません".to_string();
+            self.status_message =
+                "選択したパッチは現在開いているファイル向けではありません".to_string();
             return;
         }
 
@@ -338,8 +341,10 @@ impl DriftPatchApp {
                 self.status_message = match patch.verify_tokens.as_deref() {
                     Some(expected) => {
                         match verify_significant_tokens(&self.original_text, profile, expected) {
-                            Ok(()) => "削除パッチ: 適用するとこのファイルは削除されます（内容検証 OK）"
-                                .to_string(),
+                            Ok(()) => {
+                                "削除パッチ: 適用するとこのファイルは削除されます（内容検証 OK）"
+                                    .to_string()
+                            }
                             Err(m) => format!(
                                 "削除パッチ: 内容がパッチ記録時と一致しません（ドリフト検出）: {}",
                                 m
@@ -462,8 +467,7 @@ impl DriftPatchApp {
                     self.status_message = format!("リネーム適用完了: {} → {}", from, to);
                 }
                 Ok(action) => {
-                    self.status_message =
-                        format!("リネームパッチ: {}", action.describe(false));
+                    self.status_message = format!("リネームパッチ: {}", action.describe(false));
                 }
                 Err(e) => {
                     self.status_message = format!("パッチ適用エラー: {}", e);
@@ -480,10 +484,7 @@ impl DriftPatchApp {
         );
         match ws.apply_at(Some(file_path), &patch, &opts) {
             Ok(PlannedAction::Modify) => {
-                let result = ws
-                    .cached_text_at(file_path)
-                    .unwrap_or_default()
-                    .to_string();
+                let result = ws.cached_text_at(file_path).unwrap_or_default().to_string();
                 self.original_text = result.clone();
                 self.edited_text = result;
                 self.preview_text = String::new();
@@ -636,10 +637,8 @@ impl DriftPatchApp {
                             detail.push_str(&format!("\n  {} — {}", s.path, s.reason));
                         }
                         if result.skipped.len() > 10 {
-                            detail.push_str(&format!(
-                                "\n  ... 他 {} 件",
-                                result.skipped.len() - 10
-                            ));
+                            detail
+                                .push_str(&format!("\n  ... 他 {} 件", result.skipped.len() - 10));
                         }
                     }
                     if !save_errors.is_empty() {
@@ -744,10 +743,7 @@ mod tests {
         use driftpatch::lexer::profiles::JAVA;
         use driftpatch::patch::verify::significant_token_texts;
 
-        let tmp = std::env::temp_dir().join(format!(
-            "driftpatch_gui_del_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let tmp = std::env::temp_dir().join(format!("driftpatch_gui_del_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp).unwrap();
 
         let content = "class Doomed {\n    void a() {}\n}\n";
@@ -791,10 +787,8 @@ mod tests {
         use driftpatch::lexer::profiles::JAVA;
         use driftpatch::patch::verify::significant_token_texts;
 
-        let tmp = std::env::temp_dir().join(format!(
-            "driftpatch_gui_drift_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("driftpatch_gui_drift_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp).unwrap();
 
         // パッチ記録時と異なる内容のファイル（ドリフト状態）
@@ -852,10 +846,7 @@ mod tests {
         use driftpatch::patch::context::ContextConfig;
         use driftpatch::patch::generator::generate_patch;
 
-        let tmp = std::env::temp_dir().join(format!(
-            "driftpatch_apply_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let tmp = std::env::temp_dir().join(format!("driftpatch_apply_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp).unwrap();
 
         let target = tmp.join("Foo.java");
@@ -897,7 +888,11 @@ mod tests {
 
         // .bak バックアップが適用前の元内容であること
         let bak = target.with_file_name("Foo.java.bak");
-        assert!(bak.exists(), "バックアップが作成されていません: {}", bak.display());
+        assert!(
+            bak.exists(),
+            "バックアップが作成されていません: {}",
+            bak.display()
+        );
         assert_eq!(std::fs::read_to_string(&bak).unwrap(), orig);
 
         // メモリ状態もパッチ済み内容に更新されていること
@@ -914,10 +909,7 @@ mod tests {
         use driftpatch::patch::context::ContextConfig;
         use driftpatch::patch::generator::generate_patch;
 
-        let tmp = std::env::temp_dir().join(format!(
-            "driftpatch_nobak_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let tmp = std::env::temp_dir().join(format!("driftpatch_nobak_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp).unwrap();
 
         let target = tmp.join("Bar.java");
@@ -965,7 +957,11 @@ mod tests {
 
         // .bak は作成されないこと
         let bak = target.with_file_name("Bar.java.bak");
-        assert!(!bak.exists(), "バックアップが作成されてしまいました: {}", bak.display());
+        assert!(
+            !bak.exists(),
+            "バックアップが作成されてしまいました: {}",
+            bak.display()
+        );
 
         assert_eq!(app.original_text, on_disk);
 

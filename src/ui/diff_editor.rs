@@ -25,16 +25,17 @@ pub fn show(
             egui::ScrollArea::horizontal()
                 .id_salt(format!("{id}_inner_scroll"))
                 .show(ui, |ui| {
-                    let mut layouter = |ui: &egui::Ui, text_buffer: &dyn TextBuffer, _wrap_width: f32| {
-                        let layout_job = build_layout_job(
-                            text_buffer.as_str(),
-                            syntax,
-                            &theme,
-                            highlight_ranges,
-                            highlight_color,
-                        );
-                        ui.fonts_mut(|f| f.layout_job(layout_job))
-                    };
+                    let mut layouter =
+                        |ui: &egui::Ui, text_buffer: &dyn TextBuffer, _wrap_width: f32| {
+                            let layout_job = build_layout_job(
+                                text_buffer.as_str(),
+                                syntax,
+                                &theme,
+                                highlight_ranges,
+                                highlight_color,
+                            );
+                            ui.fonts_mut(|f| f.layout_job(layout_job))
+                        };
 
                     let mut text_edit = egui::TextEdit::multiline(text)
                         .id_salt(id)

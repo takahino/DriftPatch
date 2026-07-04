@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::lexer::Token;
+use serde::{Deserialize, Serialize};
 
 /// 生成時に書き込む .dpatch フォーマットバージョン。
 /// "2": kind / old_path / verify_tokens フィールドを追加（v1 は Modify のみ）。
@@ -72,7 +72,9 @@ impl PatchFile {
             }
             PatchKind::Delete => {
                 if self.verify_tokens.is_none() {
-                    return Err("削除パッチには verify_tokens（内容検証情報）が必要です".to_string());
+                    return Err(
+                        "削除パッチには verify_tokens（内容検証情報）が必要です".to_string()
+                    );
                 }
                 if !self.hunks.is_empty() {
                     return Err("削除パッチに hunks は指定できません".to_string());
@@ -205,7 +207,10 @@ mod tests {
     fn test_validate_pure_rename_requires_verify_tokens() {
         let mut patch = base_patch(PatchKind::Rename);
         patch.old_path = Some("src/Old.java".to_string());
-        assert!(patch.validate().is_err(), "hunks 空で verify_tokens なしはエラー");
+        assert!(
+            patch.validate().is_err(),
+            "hunks 空で verify_tokens なしはエラー"
+        );
     }
 
     #[test]

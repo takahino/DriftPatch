@@ -15,13 +15,22 @@ pub enum FileOpError {
     Apply(ApplyError),
     Io(String),
     /// 対象ファイルが存在しない。deleted_earlier は同一バッチ内の先行パッチで削除済みの場合
-    TargetNotFound { path: PathBuf, deleted_earlier: bool },
+    TargetNotFound {
+        path: PathBuf,
+        deleted_earlier: bool,
+    },
     /// Create / Rename 先に異なる内容のファイルが既に存在する
     FileAlreadyExists(PathBuf),
     /// 削除パッチの内容検証に失敗（ドリフト検出により削除を中止）
-    DeleteVerificationFailed { path: PathBuf, mismatch: VerifyMismatch },
+    DeleteVerificationFailed {
+        path: PathBuf,
+        mismatch: VerifyMismatch,
+    },
     /// リネームパッチの移動前内容検証に失敗
-    RenameVerificationFailed { path: PathBuf, mismatch: VerifyMismatch },
+    RenameVerificationFailed {
+        path: PathBuf,
+        mismatch: VerifyMismatch,
+    },
     /// kind と付随フィールドの整合性エラー
     InvalidPatch(String),
 }
@@ -70,7 +79,10 @@ pub enum PlannedAction {
     Modify,
     Create,
     Delete,
-    Rename { from: String, to: String },
+    Rename {
+        from: String,
+        to: String,
+    },
     /// 冪等ケース: 既に適用済みの状態だったため何もしなかった
     AlreadyApplied,
 }
@@ -205,8 +217,9 @@ impl PatchWorkspace {
         if !path.exists() {
             return Ok(Lookup::Missing);
         }
-        let (text, enc) = read_file_auto(path)
-            .map_err(|e| FileOpError::Io(format!("ファイル読込エラー: {}: {}", path.display(), e)))?;
+        let (text, enc) = read_file_auto(path).map_err(|e| {
+            FileOpError::Io(format!("ファイル読込エラー: {}: {}", path.display(), e))
+        })?;
         self.cache.insert(
             path.to_path_buf(),
             FileState::Present {
@@ -344,10 +357,9 @@ impl PatchWorkspace {
         };
 
         let profile = detect_profile(&target_path);
-        let expected = patch
-            .verify_tokens
-            .as_ref()
-            .ok_or_else(|| FileOpError::InvalidPatch("削除パッチに verify_tokens がありません".to_string()))?;
+        let expected = patch.verify_tokens.as_ref().ok_or_else(|| {
+            FileOpError::InvalidPatch("削除パッチに verify_tokens がありません".to_string())
+        })?;
 
         // 現物がパッチ記録時の内容と一致する場合のみ削除する（誤削除防止）
         verify_significant_tokens(&text, profile, expected).map_err(|mismatch| {
@@ -379,10 +391,9 @@ impl PatchWorkspace {
         patch: &PatchFile,
         opts: &ApplyOptions,
     ) -> Result<PlannedAction, FileOpError> {
-        let old_rel = patch
-            .old_path
-            .as_ref()
-            .ok_or_else(|| FileOpError::InvalidPatch("リネームパッチに old_path がありません".to_string()))?;
+        let old_rel = patch.old_path.as_ref().ok_or_else(|| {
+            FileOpError::InvalidPatch("リネームパッチに old_path がありません".to_string())
+        })?;
         let old_path = self.resolve(old_rel);
         let new_path = self.resolve(&patch.target_file);
         let profile = detect_profile(Path::new(&patch.target_file));
@@ -466,11 +477,7 @@ impl PatchWorkspace {
             })?;
             if !patch.hunks.is_empty() {
                 write_file_auto(&new_path, &new_text, &encoding).map_err(|e| {
-                    FileOpError::Io(format!(
-                        "ファイル書込エラー: {}: {}",
-                        new_path.display(),
-                        e
-                    ))
+                    FileOpError::Io(format!("ファイル書込エラー: {}: {}", new_path.display(), e))
                 })?;
             }
         }
@@ -513,9 +520,8 @@ pub fn backup_path(file_path: &Path) -> PathBuf {
 
 fn create_backup_file(path: &Path) -> Result<PathBuf, FileOpError> {
     let bak = backup_path(path);
-    fs::copy(path, &bak).map_err(|e| {
-        FileOpError::Io(format!("バックアップ作成失敗: {}: {}", bak.display(), e))
-    })?;
+    fs::copy(path, &bak)
+        .map_err(|e| FileOpError::Io(format!("バックアップ作成失敗: {}: {}", bak.display(), e)))?;
     Ok(bak)
 }
 
@@ -528,7 +534,8 @@ mod tests {
     use crate::patch::model::PATCH_FORMAT_VERSION;
 
     fn temp_workdir(prefix: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("driftpatch_{}_{}", prefix, uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("driftpatch_{}_{}", prefix, uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -665,7 +672,10 @@ mod tests {
 
         let patch = delete_patch_for("Legacy.java", recorded);
         let mut ws = PatchWorkspace::new(&work);
-        assert_eq!(ws.apply(&patch, &no_backup()).unwrap(), PlannedAction::Delete);
+        assert_eq!(
+            ws.apply(&patch, &no_backup()).unwrap(),
+            PlannedAction::Delete
+        );
         assert!(!target.exists());
 
         let _ = fs::remove_dir_all(&work);
@@ -858,18 +868,36 @@ mod tests {
             create_backup: true, // dry-run では .bak も作られないこと
         };
         let mut ws = PatchWorkspace::new(&work);
-        assert_eq!(ws.apply(&modify_patch, &opts).unwrap(), PlannedAction::Modify);
-        assert_eq!(ws.apply(&create_patch, &opts).unwrap(), PlannedAction::Create);
-        assert_eq!(ws.apply(&delete_patch, &opts).unwrap(), PlannedAction::Delete);
+        assert_eq!(
+            ws.apply(&modify_patch, &opts).unwrap(),
+            PlannedAction::Modify
+        );
+        assert_eq!(
+            ws.apply(&create_patch, &opts).unwrap(),
+            PlannedAction::Create
+        );
+        assert_eq!(
+            ws.apply(&delete_patch, &opts).unwrap(),
+            PlannedAction::Delete
+        );
         assert!(matches!(
             ws.apply(&rename_patch, &opts).unwrap(),
             PlannedAction::Rename { .. }
         ));
 
         // ディスクが完全に無変更であること
-        assert_eq!(fs::read_to_string(work.join("Mod.java")).unwrap(), modify_orig);
-        assert_eq!(fs::read_to_string(work.join("Del.java")).unwrap(), delete_content);
-        assert_eq!(fs::read_to_string(work.join("Mov.java")).unwrap(), rename_content);
+        assert_eq!(
+            fs::read_to_string(work.join("Mod.java")).unwrap(),
+            modify_orig
+        );
+        assert_eq!(
+            fs::read_to_string(work.join("Del.java")).unwrap(),
+            delete_content
+        );
+        assert_eq!(
+            fs::read_to_string(work.join("Mov.java")).unwrap(),
+            rename_content
+        );
         assert!(!work.join("Created.java").exists());
         assert!(!work.join("Moved.java").exists());
         let entries: Vec<_> = fs::read_dir(&work).unwrap().collect();
@@ -888,8 +916,10 @@ mod tests {
         fs::write(work.join("Seq.java"), orig).unwrap();
 
         let config = ContextConfig::default();
-        let p1 = generate_patch(orig, step1, &JAVA, "t", "s1", "Seq.java", "UTF-8", &config).unwrap();
-        let p2 = generate_patch(step1, step2, &JAVA, "t", "s2", "Seq.java", "UTF-8", &config).unwrap();
+        let p1 =
+            generate_patch(orig, step1, &JAVA, "t", "s1", "Seq.java", "UTF-8", &config).unwrap();
+        let p2 =
+            generate_patch(step1, step2, &JAVA, "t", "s2", "Seq.java", "UTF-8", &config).unwrap();
 
         let opts = ApplyOptions {
             dry_run: true,
