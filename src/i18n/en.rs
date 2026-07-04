@@ -419,4 +419,22 @@ pub static CATALOG: &[(&str, &str)] = &[
     ),
     ("gui.batch_check_result", "Conflict check result"),
     ("gui.batch_check_ok", "OK: no conflicts detected"),
+    // --- Custom language profiles ---
+    ("custom_profile.empty_name", "Profile name is empty"),
+    (
+        "custom_profile.empty_extensions",
+        "Profile '{name}' has no extensions",
+    ),
+    (
+        "custom_profile.duplicate_name",
+        "Duplicate profile name: {name}",
+    ),
+    (
+        "custom_profile.read_error",
+        "Failed to read profiles.json: {path}: {err}",
+    ),
+    (
+        "custom_profile.parse_error",
+        "Failed to parse profiles.json: {path}: {err}",
+    ),
 ];

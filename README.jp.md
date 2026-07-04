@@ -302,6 +302,42 @@ DriftPatch は **Git 操作（commit/push 等）を行いません**。コミッ
 
 設定ファイル系プロファイルの注記: `properties` は `#` と `!` の両方を行コメントとして扱い、クォート文字列（`'` `"`）は無効化している（`it's` のような値中の `'` を文字列開始と誤認しないため）。そのため値中に `#` や `!` が含まれる場合、実際の `.properties` ファイルと同様にそれ以降がコメント扱いになる。`YAML` はクォート文字列の外側で `#` を行コメントとして扱うため `key: value  # note` は問題ないが、直前にスペースの無い `foo#bar` もコメント開始として読まれる点は、完全な YAML パーサーより緩い挙動になる。
 
+## カスタム言語プロファイル
+
+組み込みプロファイルでカバーされない言語には、`settings.json` と同じディレクトリに `profiles.json` を配置する。
+
+- **Windows:** `%APPDATA%\DriftPatch\profiles.json`
+- **Linux:** `~/.local/share/DriftPatch/profiles.json`
+- **macOS:** `~/Library/Application Support/DriftPatch/profiles.json`
+
+`driftpatch`（GUI）・`driftpatch-batch`（CLI）どちらも起動時に一度だけ読み込む。ファイルが無ければ何もしない。解析に失敗した場合は警告を表示し（GUI: 初期ステータスバーメッセージ、CLI: 標準エラー出力）、組み込みプロファイルのみで続行する（壊れた `profiles.json` があっても起動は止まらない）。
+
+ファイルはプロファイル定義の JSON 配列。
+
+```json
+[
+  {
+    "name": "hcl",
+    "extensions": ["tf", "hcl"],
+    "line_comments": ["#", "//"],
+    "block_comment": ["/*", "*/"],
+    "string_delimiters": ["\""],
+    "triple_quote": false
+  }
+]
+```
+
+| フィールド | 必須 | 説明 |
+|-----------|------|------|
+| `name` | 必須 | プロファイル名。空文字不可、カスタムプロファイル内で一意であること |
+| `extensions` | 必須 | このプロファイルを適用する拡張子（先頭のドット無し）、空配列不可 |
+| `line_comments` | 任意（既定 `[]`） | 行コメントの開始記号。複数指定可（例: `["#", "!"]`） |
+| `block_comment` | 任意（既定なし） | `[開始, 終了]` のペア、例: `["/*", "*/"]` |
+| `string_delimiters` | 任意（既定 `[]`） | 文字列リテラルの開始文字 |
+| `triple_quote` | 任意（既定 `false`） | Python 形式の `'''`/`"""` トリプルクォート文字列を有効化 |
+
+カスタムプロファイルは同一拡張子の組み込みプロファイルより優先されるため、必要であれば組み込みプロファイル（例: `.java` の扱い）を上書きすることもできる。
+
 ## トラブルシューティング
 
 | 問題 | 原因 / 対処 |

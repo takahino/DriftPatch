@@ -429,4 +429,22 @@ pub static CATALOG: &[(&str, &str)] = &[
     ),
     ("gui.batch_check_result", "競合チェック結果"),
     ("gui.batch_check_ok", "OK: 競合は検出されませんでした"),
+    // --- カスタム言語プロファイル ---
+    ("custom_profile.empty_name", "プロファイル名が空です"),
+    (
+        "custom_profile.empty_extensions",
+        "プロファイル '{name}' の extensions が空です",
+    ),
+    (
+        "custom_profile.duplicate_name",
+        "プロファイル名が重複しています: {name}",
+    ),
+    (
+        "custom_profile.read_error",
+        "profiles.json の読み込みに失敗しました: {path}: {err}",
+    ),
+    (
+        "custom_profile.parse_error",
+        "profiles.json の解析に失敗しました: {path}: {err}",
+    ),
 ];

@@ -157,18 +157,32 @@ pub const ALL_PROFILES: &[&LanguageProfile] = &[
 ];
 
 /// ファイルパスの拡張子からプロファイルを選択する。
+/// カスタムプロファイル（`profiles.json`）は組み込みより優先される。
 /// 一致するものがなければ GENERIC を返す。
 pub fn detect_profile(path: &Path) -> &'static LanguageProfile {
+    detect_profile_in(super::custom::custom_profiles(), path)
+}
+
+/// `detect_profile` の内部実装。カスタムプロファイル一覧を引数で受け取ることで、
+/// グローバル状態（`OnceLock`）に触れずにテストできるようにしている。
+fn detect_profile_in(custom: &[&'static LanguageProfile], path: &Path) -> &'static LanguageProfile {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase());
 
-    if let Some(ext) = ext {
-        for profile in ALL_PROFILES {
-            if profile.extensions.contains(&ext.as_str()) {
-                return profile;
-            }
+    let Some(ext) = ext else {
+        return &GENERIC;
+    };
+
+    for profile in custom {
+        if profile.extensions.contains(&ext.as_str()) {
+            return profile;
+        }
+    }
+    for profile in ALL_PROFILES {
+        if profile.extensions.contains(&ext.as_str()) {
+            return profile;
         }
     }
     &GENERIC
@@ -249,5 +263,45 @@ mod tests {
         assert_eq!(p.name, "xml");
         let p2 = detect_profile(&PathBuf::from("index.html"));
         assert_eq!(p2.name, "xml");
+    }
+
+    #[test]
+    fn test_detect_profile_in_prefers_custom_over_builtin() {
+        // 組み込みプロファイルと同じ拡張子を持つカスタムプロファイルが
+        // グローバル状態（OnceLock）なしで優先されることを確認する
+        const CUSTOM_JAVA: LanguageProfile = LanguageProfile {
+            name: "custom-java",
+            extensions: &["java"],
+            line_comments: &["#"],
+            block_comment: None,
+            string_delimiters: &['"'],
+            triple_quote: false,
+        };
+        let custom: &[&'static LanguageProfile] = &[&CUSTOM_JAVA];
+
+        let p = detect_profile_in(custom, &PathBuf::from("Foo.java"));
+        assert_eq!(p.name, "custom-java");
+    }
+
+    #[test]
+    fn test_detect_profile_in_falls_back_to_builtin() {
+        let p = detect_profile_in(&[], &PathBuf::from("Foo.java"));
+        assert_eq!(p.name, "java");
+    }
+
+    #[test]
+    fn test_detect_profile_in_falls_back_to_generic_for_unknown_extension() {
+        const CUSTOM_TF: LanguageProfile = LanguageProfile {
+            name: "hcl",
+            extensions: &["tf"],
+            line_comments: &["#"],
+            block_comment: None,
+            string_delimiters: &['"'],
+            triple_quote: false,
+        };
+        let custom: &[&'static LanguageProfile] = &[&CUSTOM_TF];
+
+        let p = detect_profile_in(custom, &PathBuf::from("unknown.xyz"));
+        assert_eq!(p.name, "generic");
     }
 }

@@ -302,6 +302,43 @@ Unrecognized extensions use the generic profile (line comments `//`, block comme
 
 Notes on the config-file profiles: `properties` treats both `#` and `!` as line comments and disables quote-delimited strings entirely (a bare `'` in a value like `it's` would otherwise be misread as a string start); a value containing `#` or `!` is therefore treated as a comment from that point on, same as in a real `.properties` file. `YAML` treats `#` as a line comment outside of quoted strings, so `key: value  # note` works, but an unquoted `foo#bar` (no preceding space) is also read as a comment start, matching common YAML linters' expectations more loosely than a full YAML parser would.
 
+## Custom Language Profiles
+
+For languages not covered by the built-in profiles, place a `profiles.json` file next to `settings.json`:
+
+- **Windows:** `%APPDATA%\DriftPatch\profiles.json`
+- **Linux:** `~/.local/share/DriftPatch/profiles.json`
+- **macOS:** `~/Library/Application Support/DriftPatch/profiles.json`
+
+It is read once at startup by both `driftpatch` (GUI) and `driftpatch-batch` (CLI). If the file is absent, nothing happens. If it fails to parse, a warning is shown (GUI: initial status bar message; CLI: printed to stderr) and DriftPatch continues with only the built-in profiles — a broken `profiles.json` never prevents startup.
+
+The file is a JSON array of profile definitions:
+
+```json
+[
+  {
+    "name": "hcl",
+    "extensions": ["tf", "hcl"],
+    "line_comments": ["#", "//"],
+    "block_comment": ["/*", "*/"],
+    "string_delimiters": ["\""],
+    "triple_quote": false
+  }
+]
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | Profile name, must be non-empty and unique among custom profiles |
+| `extensions` | yes | File extensions this profile applies to (without the leading dot), must be non-empty |
+| `line_comments` | no (default `[]`) | Line comment start markers; multiple are allowed (e.g. `["#", "!"]`) |
+| `block_comment` | no (default none) | A `[start, end]` pair, e.g. `["/*", "*/"]` |
+| `string_delimiters` | no (default `[]`) | Characters that start a string literal |
+| `triple_quote` | no (default `false`) | Enable Python-style `'''`/`"""` triple-quoted strings |
+
+Custom profiles take priority over built-in profiles for the same extension, so a custom profile can override a built-in one (e.g. redefining `.java` handling) if needed.
+
+
 ## Troubleshooting
 
 | Problem | Cause / Solution |

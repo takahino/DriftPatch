@@ -23,7 +23,14 @@ fn main() -> eframe::Result<()> {
         native_options,
         Box::new(|cc| {
             setup_fonts(&cc.egui_ctx);
-            Ok(Box::new(DriftPatchApp::default()))
+            // profiles.json（カスタム言語プロファイル）を DriftPatchApp 生成前に読み込む。
+            // 失敗しても起動は止めず、警告を初期ステータスに表示する
+            let profile_warning = driftpatch::lexer::custom::init_custom_profiles();
+            let mut app = DriftPatchApp::default();
+            if let Some(warning) = profile_warning {
+                app.status_message = warning;
+            }
+            Ok(Box::new(app))
         }),
     )
 }

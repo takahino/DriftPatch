@@ -67,6 +67,11 @@ fn main() {
         }
     }
 
+    // profiles.json（カスタム言語プロファイル）を読み込む。失敗しても続行する
+    if let Some(warning) = driftpatch::lexer::custom::init_custom_profiles() {
+        eprintln!("{}", warning);
+    }
+
     let cli = Cli::parse();
 
     // --lang は環境変数より優先する
