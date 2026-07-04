@@ -3,10 +3,22 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::encoding::{read_file_auto, write_file_auto};
+use crate::i18n::{tr, tr_args};
 use crate::lexer::profiles::detect_profile;
-use crate::patch::applier::{apply_patch, ApplyError};
+use crate::patch::applier::{apply_patch, apply_patch_lenient, ApplyError};
 use crate::patch::model::{PatchFile, PatchKind};
 use crate::patch::verify::{significant_token_texts, verify_significant_tokens, VerifyMismatch};
+
+/// パス + 元エラーを伴う IO 系エラーメッセージを組み立てる
+fn io_error(key: &'static str, path: &Path, err: impl std::fmt::Display) -> FileOpError {
+    FileOpError::Io(tr_args(
+        key,
+        &[
+            ("path", &path.display().to_string()),
+            ("err", &err.to_string()),
+        ],
+    ))
+}
 
 /// ファイル操作を伴うパッチ適用のエラー
 #[derive(Debug)]
@@ -37,38 +49,58 @@ pub enum FileOpError {
 
 impl std::fmt::Display for FileOpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::i18n::tr_args;
         match self {
             FileOpError::Apply(e) => write!(f, "{}", e),
             FileOpError::Io(msg) => write!(f, "{}", msg),
-            FileOpError::TargetNotFound { path, deleted_earlier } => {
-                if *deleted_earlier {
-                    write!(
-                        f,
-                        "対象ファイルは先行パッチにより削除済みです: {}",
-                        path.display()
-                    )
+            FileOpError::TargetNotFound {
+                path,
+                deleted_earlier,
+            } => {
+                let key = if *deleted_earlier {
+                    "fops.target_deleted_earlier"
                 } else {
-                    write!(f, "対象ファイルが見つかりません: {}", path.display())
-                }
+                    "fops.target_not_found"
+                };
+                write!(
+                    f,
+                    "{}",
+                    tr_args(key, &[("path", &path.display().to_string())])
+                )
             }
             FileOpError::FileAlreadyExists(path) => write!(
                 f,
-                "作成先に異なる内容のファイルが既に存在します: {}",
-                path.display()
+                "{}",
+                tr_args(
+                    "fops.already_exists",
+                    &[("path", &path.display().to_string())]
+                )
             ),
             FileOpError::DeleteVerificationFailed { path, mismatch } => write!(
                 f,
-                "削除を中止しました。ファイル内容がパッチ記録時と一致しません（ドリフト検出）: {} ({})",
-                path.display(),
-                mismatch
+                "{}",
+                tr_args(
+                    "fops.delete_verification_failed",
+                    &[
+                        ("path", &path.display().to_string()),
+                        ("mismatch", &mismatch.to_string()),
+                    ]
+                )
             ),
             FileOpError::RenameVerificationFailed { path, mismatch } => write!(
                 f,
-                "リネームを中止しました。移動前ファイルの内容がパッチ記録時と一致しません（ドリフト検出）: {} ({})",
-                path.display(),
-                mismatch
+                "{}",
+                tr_args(
+                    "fops.rename_verification_failed",
+                    &[
+                        ("path", &path.display().to_string()),
+                        ("mismatch", &mismatch.to_string()),
+                    ]
+                )
             ),
-            FileOpError::InvalidPatch(msg) => write!(f, "パッチが不正: {}", msg),
+            FileOpError::InvalidPatch(msg) => {
+                write!(f, "{}", tr_args("common.invalid_patch", &[("msg", msg)]))
+            }
         }
     }
 }
@@ -101,12 +133,15 @@ impl PlannedAction {
 
     /// レポート・ステータス表示用メッセージ
     pub fn describe(&self, dry_run: bool) -> String {
+        use crate::i18n::{tr, tr_args};
         let body = match self {
-            PlannedAction::Modify => "適用成功".to_string(),
-            PlannedAction::Create => "ファイル作成".to_string(),
-            PlannedAction::Delete => "ファイル削除".to_string(),
-            PlannedAction::Rename { from, to } => format!("リネーム: {} → {}", from, to),
-            PlannedAction::AlreadyApplied => "適用済み（変更なし）".to_string(),
+            PlannedAction::Modify => tr("action.modify").to_string(),
+            PlannedAction::Create => tr("action.create").to_string(),
+            PlannedAction::Delete => tr("action.delete").to_string(),
+            PlannedAction::Rename { from, to } => {
+                tr_args("action.rename", &[("from", from), ("to", to)])
+            }
+            PlannedAction::AlreadyApplied => tr("action.already_applied").to_string(),
         };
         if dry_run {
             format!("[dry-run] {}", body)
@@ -217,9 +252,7 @@ impl PatchWorkspace {
         if !path.exists() {
             return Ok(Lookup::Missing);
         }
-        let (text, enc) = read_file_auto(path).map_err(|e| {
-            FileOpError::Io(format!("ファイル読込エラー: {}: {}", path.display(), e))
-        })?;
+        let (text, enc) = read_file_auto(path).map_err(|e| io_error("fops.read_error", path, e))?;
         self.cache.insert(
             path.to_path_buf(),
             FileState::Present {
@@ -253,20 +286,30 @@ impl PatchWorkspace {
         };
 
         let profile = detect_profile(&target_path);
-        let result = apply_patch(&text, patch, profile).map_err(FileOpError::Apply)?;
+        let outcome = apply_patch_lenient(&text, patch, profile).map_err(FileOpError::Apply)?;
+
+        // 全ハンクが「既に適用済み」と判定された場合は冪等ケース: 書込・バックアップ
+        // ともに行わず、現状のテキストのままキャッシュを更新する
+        if outcome.skipped_hunks.len() == patch.hunks.len() && !patch.hunks.is_empty() {
+            self.cache.insert(
+                target_path,
+                FileState::Present {
+                    text,
+                    encoding: detected_enc,
+                },
+            );
+            return Ok(PlannedAction::AlreadyApplied);
+        }
+
+        let result = outcome.text;
         let encoding = choose_encoding(patch, detected_enc);
 
         if !opts.dry_run {
             if opts.create_backup {
                 create_backup_file(&target_path)?;
             }
-            write_file_auto(&target_path, &result, &encoding).map_err(|e| {
-                FileOpError::Io(format!(
-                    "ファイル書込エラー: {}: {}",
-                    target_path.display(),
-                    e
-                ))
-            })?;
+            write_file_auto(&target_path, &result, &encoding)
+                .map_err(|e| io_error("fops.write_error", &target_path, e))?;
         }
 
         self.cache.insert(
@@ -307,21 +350,10 @@ impl PatchWorkspace {
 
         if !opts.dry_run {
             if let Some(parent) = target_path.parent() {
-                fs::create_dir_all(parent).map_err(|e| {
-                    FileOpError::Io(format!(
-                        "ディレクトリ作成エラー: {}: {}",
-                        parent.display(),
-                        e
-                    ))
-                })?;
+                fs::create_dir_all(parent).map_err(|e| io_error("fops.mkdir_error", parent, e))?;
             }
-            write_file_auto(&target_path, &new_text, &encoding).map_err(|e| {
-                FileOpError::Io(format!(
-                    "ファイル書込エラー: {}: {}",
-                    target_path.display(),
-                    e
-                ))
-            })?;
+            write_file_auto(&target_path, &new_text, &encoding)
+                .map_err(|e| io_error("fops.write_error", &target_path, e))?;
         }
 
         self.cache.insert(
@@ -358,7 +390,7 @@ impl PatchWorkspace {
 
         let profile = detect_profile(&target_path);
         let expected = patch.verify_tokens.as_ref().ok_or_else(|| {
-            FileOpError::InvalidPatch("削除パッチに verify_tokens がありません".to_string())
+            FileOpError::InvalidPatch(tr("fops.delete_missing_verify").to_string())
         })?;
 
         // 現物がパッチ記録時の内容と一致する場合のみ削除する（誤削除防止）
@@ -373,13 +405,8 @@ impl PatchWorkspace {
             if opts.create_backup {
                 create_backup_file(&target_path)?;
             }
-            fs::remove_file(&target_path).map_err(|e| {
-                FileOpError::Io(format!(
-                    "ファイル削除エラー: {}: {}",
-                    target_path.display(),
-                    e
-                ))
-            })?;
+            fs::remove_file(&target_path)
+                .map_err(|e| io_error("fops.delete_error", &target_path, e))?;
         }
 
         self.cache.insert(target_path, FileState::Deleted);
@@ -392,7 +419,7 @@ impl PatchWorkspace {
         opts: &ApplyOptions,
     ) -> Result<PlannedAction, FileOpError> {
         let old_rel = patch.old_path.as_ref().ok_or_else(|| {
-            FileOpError::InvalidPatch("リネームパッチに old_path がありません".to_string())
+            FileOpError::InvalidPatch(tr("fops.rename_missing_old_path").to_string())
         })?;
         let old_path = self.resolve(old_rel);
         let new_path = self.resolve(&patch.target_file);
@@ -412,9 +439,7 @@ impl PatchWorkspace {
                 if patch.hunks.is_empty() {
                     if let Lookup::Present(new_text, _) = self.lookup(&new_path)? {
                         let expected = patch.verify_tokens.as_ref().ok_or_else(|| {
-                            FileOpError::InvalidPatch(
-                                "リネームパッチに verify_tokens がありません".to_string(),
-                            )
+                            FileOpError::InvalidPatch(tr("fops.rename_missing_verify").to_string())
                         })?;
                         if verify_significant_tokens(&new_text, profile, expected).is_ok() {
                             return Ok(PlannedAction::AlreadyApplied);
@@ -432,7 +457,7 @@ impl PatchWorkspace {
         // 途中失敗で中途半端な状態（移動済みだが編集失敗など）を残さない
         let new_text = if patch.hunks.is_empty() {
             let expected = patch.verify_tokens.as_ref().ok_or_else(|| {
-                FileOpError::InvalidPatch("リネームパッチに verify_tokens がありません".to_string())
+                FileOpError::InvalidPatch(tr("fops.rename_missing_verify").to_string())
             })?;
             verify_significant_tokens(&old_text, profile, expected).map_err(|mismatch| {
                 FileOpError::RenameVerificationFailed {
@@ -459,26 +484,21 @@ impl PatchWorkspace {
                 create_backup_file(&old_path)?;
             }
             if let Some(parent) = new_path.parent() {
-                fs::create_dir_all(parent).map_err(|e| {
-                    FileOpError::Io(format!(
-                        "ディレクトリ作成エラー: {}: {}",
-                        parent.display(),
-                        e
-                    ))
-                })?;
+                fs::create_dir_all(parent).map_err(|e| io_error("fops.mkdir_error", parent, e))?;
             }
             fs::rename(&old_path, &new_path).map_err(|e| {
-                FileOpError::Io(format!(
-                    "リネームエラー: {} → {}: {}",
-                    old_path.display(),
-                    new_path.display(),
-                    e
+                FileOpError::Io(tr_args(
+                    "fops.rename_error",
+                    &[
+                        ("from", &old_path.display().to_string()),
+                        ("to", &new_path.display().to_string()),
+                        ("err", &e.to_string()),
+                    ],
                 ))
             })?;
             if !patch.hunks.is_empty() {
-                write_file_auto(&new_path, &new_text, &encoding).map_err(|e| {
-                    FileOpError::Io(format!("ファイル書込エラー: {}: {}", new_path.display(), e))
-                })?;
+                write_file_auto(&new_path, &new_text, &encoding)
+                    .map_err(|e| io_error("fops.write_error", &new_path, e))?;
             }
         }
 
@@ -520,8 +540,7 @@ pub fn backup_path(file_path: &Path) -> PathBuf {
 
 fn create_backup_file(path: &Path) -> Result<PathBuf, FileOpError> {
     let bak = backup_path(path);
-    fs::copy(path, &bak)
-        .map_err(|e| FileOpError::Io(format!("バックアップ作成失敗: {}: {}", bak.display(), e)))?;
+    fs::copy(path, &bak).map_err(|e| io_error("fops.backup_error", &bak, e))?;
     Ok(bak)
 }
 
@@ -718,6 +737,55 @@ mod tests {
         assert!(!target.exists());
         let bak = work.join("Bak.java.bak");
         assert_eq!(fs::read_to_string(&bak).unwrap(), content);
+
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    #[test]
+    fn test_modify_reapply_is_already_applied_and_skips_write() {
+        // 同一 Modify パッチを2回適用: 2回目は AlreadyApplied で、
+        // ファイル内容・.bak いずれも変化しないこと
+        let work = temp_workdir("fops_modify_idem");
+        let orig = "void foo() {\n    return null;\n}\n";
+        let edit = "void foo() {\n    Objects.requireNonNull(bar);\n    return null;\n}\n";
+        let target = work.join("Foo.java");
+        fs::write(&target, orig).unwrap();
+
+        let patch = generate_patch(
+            orig,
+            edit,
+            &JAVA,
+            "tester",
+            "t",
+            "Foo.java",
+            "UTF-8",
+            &ContextConfig::default(),
+        )
+        .unwrap();
+
+        let opts = ApplyOptions {
+            dry_run: false,
+            create_backup: true,
+        };
+        let mut ws = PatchWorkspace::new(&work);
+        let first = ws.apply(&patch, &opts).unwrap();
+        assert_eq!(first, PlannedAction::Modify);
+        assert_eq!(fs::read_to_string(&target).unwrap(), edit);
+
+        // 1回目の適用で作られた .bak を削除し、2回目で再作成されないことを確認する
+        let bak = work.join("Foo.java.bak");
+        assert!(bak.exists());
+        fs::remove_file(&bak).unwrap();
+
+        let mut ws2 = PatchWorkspace::new(&work);
+        let second = ws2.apply(&patch, &opts).unwrap();
+        assert_eq!(second, PlannedAction::AlreadyApplied);
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            edit,
+            "内容が変化しないこと"
+        );
+        assert!(!bak.exists(), "冪等ケースでは .bak が作られないこと");
 
         let _ = fs::remove_dir_all(&work);
     }

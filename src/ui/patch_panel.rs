@@ -1,19 +1,20 @@
 use crate::app::DriftPatchApp;
+use driftpatch::i18n::{tr, tr_args};
 
 /// 下部パネル: 開いているファイル向けパッチ一覧
 pub fn render_patch_panel(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        ui.strong("パッチ一覧");
-        if ui.button("🔄 更新").clicked() {
+        ui.strong(tr("gui.panel_patches"));
+        if ui.button(tr("gui.btn_refresh")).clicked() {
             app.reload_patches();
         }
         if app.file_path.is_some() {
             let can_act = app.selected_patch.is_some();
             ui.add_enabled_ui(can_act, |ui| {
-                if ui.button("▶ 適用").clicked() {
+                if ui.button(tr("gui.btn_apply")).clicked() {
                     app.apply_selected_patch();
                 }
-                if ui.button("🗑 削除").clicked() {
+                if ui.button(tr("gui.btn_delete")).clicked() {
                     app.delete_selected_patch();
                 }
             });
@@ -23,29 +24,29 @@ pub fn render_patch_panel(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
     ui.separator();
 
     if app.settings.patch_repo_path.is_empty() {
-        ui.label("⚠ パッチリポジトリパスが設定されていません（設定ボタンから設定してください）");
+        ui.label(tr("gui.warn_repo_not_set"));
         return;
     }
 
     if app.file_path.is_none() {
-        ui.label("ファイルを開くと、そのファイル向けのパッチが表示されます");
+        ui.label(tr("gui.hint_open_file"));
         return;
     }
 
     if app.settings.work_dir.trim().is_empty() {
-        ui.label("⚠ work_dir が設定されていません（設定ボタンから設定してください）");
+        ui.label(tr("gui.warn_workdir_not_set"));
         return;
     }
 
     if app.open_file_relative().is_none() {
-        ui.label("⚠ 開いているファイルが work_dir 配下にありません");
+        ui.label(tr("gui.warn_not_under_workdir"));
         return;
     }
 
     let visible_patches = app.patches_for_open_file();
     if visible_patches.is_empty() {
         if let Some(rel) = app.open_file_relative() {
-            ui.label(format!("このファイル向けのパッチがありません: {}", rel));
+            ui.label(tr_args("gui.no_patches_for_file", &[("path", &rel)]));
         }
         return;
     }
@@ -54,7 +55,7 @@ pub fn render_patch_panel(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
     let mut new_selection: Option<String> = app.selected_patch.clone();
 
     if let Some(rel) = app.open_file_relative() {
-        ui.label(format!("対象: {}", rel));
+        ui.label(tr_args("gui.target_label", &[("path", &rel)]));
     }
 
     egui::ScrollArea::vertical()
@@ -65,11 +66,11 @@ pub fn render_patch_panel(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
                 .striped(true)
                 .min_col_width(80.0)
                 .show(ui, |ui| {
-                    ui.strong("パッチ");
-                    ui.strong("種別");
-                    ui.strong("作者");
-                    ui.strong("説明");
-                    ui.strong("作成日時");
+                    ui.strong(tr("gui.col_patch"));
+                    ui.strong(tr("gui.col_kind"));
+                    ui.strong(tr("gui.col_author"));
+                    ui.strong(tr("gui.col_desc"));
+                    ui.strong(tr("gui.col_created"));
                     ui.end_row();
 
                     for (patch_path, patch) in &visible_patches {

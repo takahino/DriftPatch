@@ -67,6 +67,7 @@ impl PatchCheckFinding {
 
     /// CLI / レポート用の1行メッセージ
     pub fn describe(&self) -> String {
+        use crate::i18n::tr_args;
         match self {
             PatchCheckFinding::OverlappingHunk {
                 patch_a,
@@ -74,25 +75,39 @@ impl PatchCheckFinding {
                 target_file,
                 hunk_a,
                 hunk_b,
-            } => format!(
-                "重複ハンク: {} のハンク {} と {} のハンク {} が同一ファイル {} の重なる範囲を触っています",
-                patch_a, hunk_a, patch_b, hunk_b, target_file
+            } => tr_args(
+                "check.overlapping_hunk",
+                &[
+                    ("patch_a", patch_a),
+                    ("hunk_a", &hunk_a.to_string()),
+                    ("patch_b", patch_b),
+                    ("hunk_b", &hunk_b.to_string()),
+                    ("target", target_file),
+                ],
             ),
             PatchCheckFinding::ModifyDeletedFile {
                 edit_patch,
                 delete_patch,
                 target_file,
-            } => format!(
-                "削除対象への編集: {} は {} により削除される {} を編集しようとしています",
-                edit_patch, delete_patch, target_file
+            } => tr_args(
+                "check.modify_deleted",
+                &[
+                    ("edit_patch", edit_patch),
+                    ("delete_patch", delete_patch),
+                    ("target", target_file),
+                ],
             ),
             PatchCheckFinding::PatchTargetsRenameOldPath {
                 patch,
                 rename_patch,
                 old_path,
-            } => format!(
-                "リネーム旧パス宛パッチ: {} は {} の旧パス {} を対象としています（適用順序に依存）",
-                patch, rename_patch, old_path
+            } => tr_args(
+                "check.rename_old_path",
+                &[
+                    ("patch", patch),
+                    ("rename_patch", rename_patch),
+                    ("old_path", old_path),
+                ],
             ),
         }
     }
@@ -127,7 +142,7 @@ impl PatchCheckOutcome {
 /// `patch_dir` 内のパッチ同士の両立性を適用せずに検査する。
 pub fn check_patches(config: &PatchCheckConfig) -> Result<PatchCheckOutcome, String> {
     let patches = PatchRepository::list_from_dir(&config.patch_dir)
-        .map_err(|e| format!("パッチ列挙エラー: {}", e))?;
+        .map_err(|e| crate::i18n::tr_args("batch.list_error", &[("err", &e.to_string())]))?;
 
     let findings = detect_conflicts(&patches);
 

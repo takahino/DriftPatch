@@ -52,14 +52,14 @@ impl<'a> GenericTokenizer<'a> {
                 }
             }
 
-            // 行コメント
-            if let Some(lc) = self.profile.line_comment {
+            // 行コメント（複数の開始記号に対応。例: properties の `#` と `!`）
+            for &lc in self.profile.line_comments {
                 if starts_with_str(&chars, i, lc) {
                     let (tok, consumed) = self.read_line_comment(&chars, i, byte_pos);
                     byte_pos += tok.text.len();
                     tokens.push(tok);
                     i += consumed;
-                    continue;
+                    continue 'outer;
                 }
             }
 
@@ -292,6 +292,95 @@ mod tests {
         let tokenizer = GenericTokenizer::new(&JAVA);
         let tokens = tokenizer.tokenize("/* block */ int x;");
         assert!(tokens.iter().any(|t| t.kind == TokenKind::BlockComment));
+    }
+
+    #[test]
+    fn test_tokenize_properties_hash_comment() {
+        use crate::lexer::profiles::PROPERTIES;
+        let tokenizer = GenericTokenizer::new(&PROPERTIES);
+        let tokens = tokenizer.tokenize("# comment\nkey=value\n");
+        assert!(tokens
+            .iter()
+            .any(|t| t.kind == TokenKind::LineComment && t.text.starts_with('#')));
+    }
+
+    #[test]
+    fn test_tokenize_properties_bang_comment() {
+        use crate::lexer::profiles::PROPERTIES;
+        let tokenizer = GenericTokenizer::new(&PROPERTIES);
+        let tokens = tokenizer.tokenize("! legacy comment\nkey=value\n");
+        assert!(tokens
+            .iter()
+            .any(|t| t.kind == TokenKind::LineComment && t.text.starts_with('!')));
+    }
+
+    #[test]
+    fn test_tokenize_properties_apostrophe_in_value_is_not_a_string() {
+        use crate::lexer::profiles::PROPERTIES;
+        // string_delimiters が空なので "it's" の ' はコード扱いになり、
+        // 文字列リテラルとして誤って行末までを飲み込まないこと
+        let tokenizer = GenericTokenizer::new(&PROPERTIES);
+        let tokens = tokenizer.tokenize("msg=it's fine\nnext=1\n");
+        assert!(
+            !tokens.iter().any(|t| t.kind == TokenKind::StringLiteral),
+            "tokens: {:?}",
+            tokens
+        );
+        let sig: Vec<&str> = tokens
+            .iter()
+            .filter(|t| t.is_significant())
+            .map(|t| t.text.as_str())
+            .collect();
+        assert!(sig.contains(&"next"), "sig: {:?}", sig);
+    }
+
+    #[test]
+    fn test_tokenize_xml_block_comment() {
+        use crate::lexer::profiles::XML;
+        let tokenizer = GenericTokenizer::new(&XML);
+        let tokens = tokenizer.tokenize("<!-- comment --><a>1</a>");
+        assert!(tokens
+            .iter()
+            .any(|t| t.kind == TokenKind::BlockComment && t.text == "<!-- comment -->"));
+    }
+
+    #[test]
+    fn test_tokenize_yaml_string_hides_hash() {
+        use crate::lexer::profiles::YAML;
+        // 文字列リテラル内の # はコメント扱いにならないこと
+        let tokenizer = GenericTokenizer::new(&YAML);
+        let tokens = tokenizer.tokenize("key: \"a # b\"\n");
+        assert!(
+            !tokens.iter().any(|t| t.kind == TokenKind::LineComment),
+            "tokens: {:?}",
+            tokens
+        );
+        assert!(tokens
+            .iter()
+            .any(|t| t.kind == TokenKind::StringLiteral && t.text == "\"a # b\""));
+    }
+
+    #[test]
+    fn test_tokenize_json_no_comments() {
+        use crate::lexer::profiles::JSON;
+        // JSON にはコメント記法が無いため # や // はただのコードトークンになること
+        let tokenizer = GenericTokenizer::new(&JSON);
+        let tokens = tokenizer.tokenize("{\"a\": 1}");
+        assert!(!tokens.iter().any(|t| t.kind == TokenKind::LineComment));
+        assert!(!tokens.iter().any(|t| t.kind == TokenKind::BlockComment));
+        assert!(tokens
+            .iter()
+            .any(|t| t.kind == TokenKind::StringLiteral && t.text == "\"a\""));
+    }
+
+    #[test]
+    fn test_tokenize_java_line_comment_still_works() {
+        // line_comments 構造変更後も既存の JAVA `//` が回帰しないこと
+        let tokenizer = GenericTokenizer::new(&JAVA);
+        let tokens = tokenizer.tokenize("int x = 1; // note\n");
+        assert!(tokens
+            .iter()
+            .any(|t| t.kind == TokenKind::LineComment && t.text == "// note"));
     }
 
     #[test]

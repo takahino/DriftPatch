@@ -90,6 +90,17 @@ flowchart LR
 4. Optionally override the description, then click **Generate**.
 5. A `.dpatch` is created for every changed file in the commit. Multiple edits in the same file are split into separate patch files per hunk (`-h1`, `-h2`, etc.).
 
+### Batch apply / conflict check from the GUI
+
+Click **Batch apply** in the toolbar to run the same operations as `driftpatch-batch` without leaving the GUI:
+
+1. Confirm or edit **Work directory**, **Patch directory**, and **Report directory** (pre-filled from Settings).
+2. Leave **Dry run** checked to preview what each patch would do without changing any file, or uncheck it to apply for real (a warning banner appears when dry run is disabled).
+3. Click **Run dry-run** / **Apply** to execute; results (summary counts and per-patch status) are shown below, along with the generated Excel/HTML report paths.
+4. Click **Check conflicts** to run the same conflict check as `driftpatch-batch check` against the configured patch directory.
+
+A real (non-dry-run) apply reloads the patch list and, if a file is currently open, re-reads it from disk so the editor reflects the applied changes.
+
 ### Three-column layout
 
 | Column | Label | Purpose |
@@ -103,6 +114,23 @@ The left and right columns scroll in sync with the center column.
 ### Patch list panel
 
 The bottom panel lists patches whose `target_file` matches the currently open file. Use **Refresh** to reload from disk.
+
+### Search in the editor
+
+Press **Ctrl+F** (⌘F on macOS) while the center column has focus to open the search bar. Type to search the editable text; matches are highlighted (current match in orange, others in yellow) and the left/right columns scroll in sync since they follow the center column's scroll position.
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+F` | Open search |
+| `Enter` / `F3` | Jump to next match |
+| `Shift+Enter` / `Shift+F3` | Jump to previous match |
+| `Esc` | Close search |
+
+The "Aa" checkbox toggles case sensitivity (case-insensitive matching is ASCII-only).
+
+### Opening files: drag & drop and recent files
+
+Drag a file from Explorer/Finder onto the DriftPatch window to open it (a "Drop to open" overlay appears while dragging). The **Recent files** menu in the toolbar lists up to 10 most recently opened files (most recent first); click an entry to reopen it, or **Clear history** to empty the list. If a recent file no longer exists on disk, opening it removes it from the history and shows an error instead.
 
 ## Batch CLI Usage
 
@@ -129,7 +157,7 @@ After a run, two files are created in `--report-dir`:
 - `driftpatch-report-YYYYMMDD-HHMMSS.xlsx`
 - `driftpatch-report-YYYYMMDD-HHMMSS.html`
 
-Each row records patch path, target file, status (`success` / `failed`), error kind, and timestamps.
+Each row records patch path, target file, status (`success` / `skipped` / `failed`), error kind, and timestamps. A `skipped` row means the patch was already applied (idempotent detection) — it does not count as a failure.
 
 ### Exit codes
 
@@ -159,6 +187,12 @@ Detected issues:
 Exit code: `1` if any error is found, `0` otherwise.
 
 `apply` analyzes inter-patch dependencies before applying and automatically orders them by base priority `Create -> Modify -> Rename -> Delete`, plus Rename old/new path dependencies. This keeps a batch containing both a Modify on `Old.java` and a Rename `Old.java -> New.java` safe by applying the Modify first.
+
+### Idempotent re-apply
+
+Re-running `apply` against a work directory where some patches were already applied is safe: a `Modify` patch whose target already matches the patch's post-apply content (ignoring whitespace/indent differences) is detected as **already applied** and reported with status `skipped` instead of `failed` or `success`. No file write or `.bak` backup is created for a skipped patch. `Create` and pure `Rename` patches already had equivalent idempotent detection.
+
+This detection is heuristic: for a hunk that only deletes tokens (empty `added_text`), "already applied" is detected by finding the hunk's context tokens adjacent to each other. If a hunk is only partially applied (e.g. one of two expected matches), it is still treated as drift and reported as `failed`, not skipped.
 
 ### Generate patches from a Git commit
 
@@ -275,9 +309,52 @@ A `.dpatch` file is JSON with the following structure.
 | C# | `.cs`, `.csx` |
 | Go | `.go` |
 | PL/SQL | `.pls`, `.pks`, `.pkb`, `.pck`, `.psc`, `.plsql` |
+| JSON | `.json` |
+| YAML | `.yml`, `.yaml` |
+| properties | `.properties` |
+| XML/HTML | `.xml`, `.xsd`, `.xsl`, `.xslt`, `.svg`, `.xhtml`, `.html`, `.htm` |
 | Generic | All other extensions |
 
 Unrecognized extensions use the generic profile (line comments `//`, block comments `/* */`).
+
+Notes on the config-file profiles: `properties` treats both `#` and `!` as line comments and disables quote-delimited strings entirely (a bare `'` in a value like `it's` would otherwise be misread as a string start); a value containing `#` or `!` is therefore treated as a comment from that point on, same as in a real `.properties` file. `YAML` treats `#` as a line comment outside of quoted strings, so `key: value  # note` works, but an unquoted `foo#bar` (no preceding space) is also read as a comment start, matching common YAML linters' expectations more loosely than a full YAML parser would.
+
+## Custom Language Profiles
+
+For languages not covered by the built-in profiles, place a `profiles.json` file next to `settings.json`:
+
+- **Windows:** `%APPDATA%\DriftPatch\profiles.json`
+- **Linux:** `~/.local/share/DriftPatch/profiles.json`
+- **macOS:** `~/Library/Application Support/DriftPatch/profiles.json`
+
+It is read once at startup by both `driftpatch` (GUI) and `driftpatch-batch` (CLI). If the file is absent, nothing happens. If it fails to parse, a warning is shown (GUI: initial status bar message; CLI: printed to stderr) and DriftPatch continues with only the built-in profiles — a broken `profiles.json` never prevents startup.
+
+The file is a JSON array of profile definitions:
+
+```json
+[
+  {
+    "name": "hcl",
+    "extensions": ["tf", "hcl"],
+    "line_comments": ["#", "//"],
+    "block_comment": ["/*", "*/"],
+    "string_delimiters": ["\""],
+    "triple_quote": false
+  }
+]
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | Profile name, must be non-empty and unique among custom profiles |
+| `extensions` | yes | File extensions this profile applies to (without the leading dot), must be non-empty |
+| `line_comments` | no (default `[]`) | Line comment start markers; multiple are allowed (e.g. `["#", "!"]`) |
+| `block_comment` | no (default none) | A `[start, end]` pair, e.g. `["/*", "*/"]` |
+| `string_delimiters` | no (default `[]`) | Characters that start a string literal |
+| `triple_quote` | no (default `false`) | Enable Python-style `'''`/`"""` triple-quoted strings |
+
+Custom profiles take priority over built-in profiles for the same extension, so a custom profile can override a built-in one (e.g. redefining `.java` handling) if needed.
+
 
 ## Troubleshooting
 

@@ -3,10 +3,22 @@ use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, TextBuffer};
 use egui_code_editor::{format_token, ColorTheme, Syntax, Token, TokenType};
 
-const FONT_SIZE: f32 = 13.0;
+/// フォントサイズ設定の許容範囲（settings_window の DragValue と共有）
+pub const MIN_FONT_SIZE: f32 = 10.0;
+pub const MAX_FONT_SIZE: f32 = 24.0;
+pub const DEFAULT_FONT_SIZE: f32 = 13.0;
+
 const ROWS: usize = 40;
 
+/// 検索マッチのハイライト色（通常）
+const SEARCH_MATCH_COLOR: Color32 = Color32::from_rgb(90, 80, 0);
+/// 検索マッチのハイライト色（カレント）
+const SEARCH_CURRENT_COLOR: Color32 = Color32::from_rgb(200, 120, 0);
+
 /// 差分ハイライト付きコードエディタを表示する。
+/// `search_ranges` / `current_match` は検索ヒットのハイライト（左右の読取専用列では
+/// 空スライス・`None` を渡せばよい）。検索ハイライトは差分ハイライトより優先される。
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
     id: &str,
@@ -16,12 +28,15 @@ pub fn show(
     highlight_ranges: &[(usize, usize)],
     highlight_color: Color32,
     editable: bool,
+    font_size: f32,
+    search_ranges: &[(usize, usize)],
+    current_match: Option<(usize, usize)>,
 ) {
     let frame = egui::Frame::new().fill(theme.bg());
     frame.show(ui, |ui| {
         ui.horizontal_top(|ui| {
-            theme.modify_style(ui, FONT_SIZE);
-            show_numlines(ui, id, text.as_str(), theme);
+            theme.modify_style(ui, font_size);
+            show_numlines(ui, id, text.as_str(), theme, font_size);
             egui::ScrollArea::horizontal()
                 .id_salt(format!("{id}_inner_scroll"))
                 .show(ui, |ui| {
@@ -33,6 +48,9 @@ pub fn show(
                                 &theme,
                                 highlight_ranges,
                                 highlight_color,
+                                font_size,
+                                search_ranges,
+                                current_match,
                             );
                             ui.fonts_mut(|f| f.layout_job(layout_job))
                         };
@@ -54,16 +72,32 @@ pub fn show(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_layout_job(
     text: &str,
     syntax: &Syntax,
     theme: &ColorTheme,
     highlight_ranges: &[(usize, usize)],
     highlight_color: Color32,
+    font_size: f32,
+    search_ranges: &[(usize, usize)],
+    current_match: Option<(usize, usize)>,
 ) -> LayoutJob {
     let mut job = LayoutJob::default();
     let mut lexer = Token::default();
     let mut byte_offset = 0usize;
+
+    let search_highlight = |start: usize, end: usize| -> Option<Color32> {
+        if let Some(cm) = current_match {
+            if overlaps_range(start, end, std::slice::from_ref(&cm)) {
+                return Some(SEARCH_CURRENT_COLOR);
+            }
+        }
+        if overlaps_range(start, end, search_ranges) {
+            return Some(SEARCH_MATCH_COLOR);
+        }
+        None
+    };
 
     for token in lexer.tokens(syntax, text) {
         let buf = token.buffer();
@@ -75,9 +109,12 @@ fn build_layout_job(
         let end = byte_offset + buf.len();
         byte_offset = end;
 
-        let mut format = format_token(theme, FONT_SIZE, token.ty());
+        let mut format = format_token(theme, font_size, token.ty());
         if overlaps_range(start, end, highlight_ranges) {
             format.background = highlight_color;
+        }
+        if let Some(color) = search_highlight(start, end) {
+            format.background = color;
         }
         job.append(buf, 0.0, format);
     }
@@ -85,9 +122,12 @@ fn build_layout_job(
     // 末尾に改行がない場合でもレイアウトが崩れないよう、残りを Unknown として追加
     if byte_offset < text.len() {
         let remainder = &text[byte_offset..];
-        let mut format = format_token(theme, FONT_SIZE, TokenType::Unknown);
+        let mut format = format_token(theme, font_size, TokenType::Unknown);
         if overlaps_range(byte_offset, text.len(), highlight_ranges) {
             format.background = highlight_color;
+        }
+        if let Some(color) = search_highlight(byte_offset, text.len()) {
+            format.background = color;
         }
         job.append(remainder, 0.0, format);
     }
@@ -95,7 +135,7 @@ fn build_layout_job(
     job
 }
 
-fn show_numlines(ui: &mut egui::Ui, id: &str, text: &str, theme: ColorTheme) {
+fn show_numlines(ui: &mut egui::Ui, id: &str, text: &str, theme: ColorTheme, font_size: f32) {
     let total = if text.ends_with('\n') || text.is_empty() {
         text.lines().count() + 1
     } else {
@@ -116,13 +156,13 @@ fn show_numlines(ui: &mut egui::Ui, id: &str, text: &str, theme: ColorTheme) {
         .join("\n");
 
     #[allow(clippy::cast_precision_loss)]
-    let width = max_indent as f32 * FONT_SIZE * 0.5;
+    let width = max_indent as f32 * font_size * 0.5;
 
     let mut layouter = |ui: &egui::Ui, text_buffer: &dyn TextBuffer, _wrap_width: f32| {
         let layout_job = LayoutJob::single_section(
             text_buffer.as_str().to_string(),
             TextFormat::simple(
-                egui::FontId::monospace(FONT_SIZE),
+                egui::FontId::monospace(font_size),
                 theme.type_color(TokenType::Comment(true)),
             ),
         );

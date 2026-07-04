@@ -8,8 +8,9 @@ use std::path::PathBuf;
 
 use chrono::Local;
 
+use crate::i18n::{tr, tr_args};
 use crate::patch::applier::ApplyError;
-use crate::patch::file_ops::{ApplyOptions, FileOpError, PatchWorkspace};
+use crate::patch::file_ops::{ApplyOptions, FileOpError, PatchWorkspace, PlannedAction};
 use crate::patch::model::{PatchFile, PatchKind};
 use crate::patch::repository::PatchRepository;
 
@@ -40,7 +41,7 @@ pub struct BatchApplyOutcome {
 pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String> {
     let started_at = Local::now();
     let patches = PatchRepository::list_from_dir(&config.patch_dir)
-        .map_err(|e| format!("パッチ列挙エラー: {}", e))?;
+        .map_err(|e| tr_args("batch.list_error", &[("err", &e.to_string())]))?;
 
     // Rename 導入後に辞書順では破綻する依存（Old.java への Modify vs Old→New の Rename など）を
     // 吸収するため、kind / created_at / Rename の依存関係に基づき適用順を整列する。
@@ -65,7 +66,7 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
                 error_kind: Some("InvalidTarget".to_string()),
                 hunk_index: None,
                 action: None,
-                message: "target_file が空です".to_string(),
+                message: tr("common.empty_target").to_string(),
                 started_at: row_started.format("%Y-%m-%d %H:%M:%S").to_string(),
                 finished_at: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             });
@@ -77,11 +78,16 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
         let finished_at = Local::now();
         match apply_result {
             Ok(action) => {
+                let status = if action == PlannedAction::AlreadyApplied {
+                    "skipped"
+                } else {
+                    "success"
+                };
                 rows.push(ReportRow {
                     patch_path: patch_rel,
                     patch_id: patch.id,
                     target_file: patch.target_file,
-                    status: "success".to_string(),
+                    status: status.to_string(),
                     error_kind: None,
                     hunk_index: None,
                     action: Some(action.kind_str().to_string()),
@@ -110,7 +116,8 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
 
     let finished_at = Local::now();
     let success_count = rows.iter().filter(|r| r.status == "success").count();
-    let failed_count = rows.len() - success_count;
+    let skipped_count = rows.iter().filter(|r| r.status == "skipped").count();
+    let failed_count = rows.len() - success_count - skipped_count;
 
     let report = BatchReport {
         work_dir: config.work_dir.display().to_string(),
@@ -121,13 +128,14 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
         summary: ReportSummary {
             total: rows.len(),
             success: success_count,
+            skipped: skipped_count,
             failed: failed_count,
         },
         rows,
     };
 
     std::fs::create_dir_all(&config.report_dir)
-        .map_err(|e| format!("レポートディレクトリ作成エラー: {}", e))?;
+        .map_err(|e| tr_args("batch.report_dir_error", &[("err", &e.to_string())]))?;
 
     let stamp = started_at.format("%Y%m%d-%H%M%S").to_string();
     let xlsx_path = config
@@ -138,9 +146,9 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
         .join(format!("driftpatch-report-{}.html", stamp));
 
     write_xlsx_report(&report, &xlsx_path)
-        .map_err(|e| format!("Excel レポート出力エラー: {}", e))?;
+        .map_err(|e| tr_args("batch.xlsx_error", &[("err", &e)]))?;
     write_html_report(&report, &html_path)
-        .map_err(|e| format!("HTML レポート出力エラー: {}", e))?;
+        .map_err(|e| tr_args("batch.html_error", &[("err", &e)]))?;
 
     Ok(BatchApplyOutcome {
         report,
@@ -274,32 +282,20 @@ fn classify_file_op_error(err: &FileOpError) -> (String, Option<usize>, String) 
 }
 
 fn classify_apply_error(err: &ApplyError) -> (String, Option<usize>, String) {
+    // メッセージ本文は ApplyError の Display（i18n 済み）に委譲する
     match err {
-        ApplyError::NoMatch { hunk_index } => (
-            "NoMatch".to_string(),
-            Some(*hunk_index),
-            format!("ハンク {} の適用箇所が見つかりませんでした", hunk_index),
-        ),
-        ApplyError::CountMismatch {
-            hunk_index,
-            expected,
-            actual,
-            positions,
-        } => (
+        ApplyError::NoMatch { hunk_index } => {
+            ("NoMatch".to_string(), Some(*hunk_index), err.to_string())
+        }
+        ApplyError::CountMismatch { hunk_index, .. } => (
             "CountMismatch".to_string(),
             Some(*hunk_index),
-            format!(
-                "ハンク {} の期待マッチ数 {} と実際のマッチ数 {} が一致しません。位置: {:?}",
-                hunk_index, expected, actual, positions
-            ),
+            err.to_string(),
         ),
         ApplyError::OverlappingMatches { hunk_index } => (
             "OverlappingMatches".to_string(),
             Some(*hunk_index),
-            format!(
-                "ハンク {} の複数マッチの置換範囲が重なっています",
-                hunk_index
-            ),
+            err.to_string(),
         ),
     }
 }
@@ -358,6 +354,65 @@ mod tests {
 
         let applied = std::fs::read_to_string(&target_file).unwrap();
         assert!(applied.contains("Objects.requireNonNull"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_batch_apply_reapply_reports_skipped() {
+        // 同一パッチディレクトリを2回 apply_all: 2回目は summary.skipped に計上され、
+        // exit 相当（failed）は 0 のままであること
+        let tmp =
+            std::env::temp_dir().join(format!("driftpatch_batch_idem_{}", uuid::Uuid::new_v4()));
+        let work_dir = tmp.join("work");
+        let patch_repo = tmp.join("repo");
+        let report_dir = tmp.join("reports");
+        std::fs::create_dir_all(&work_dir).unwrap();
+
+        let target_file = work_dir.join("Foo.java");
+        let orig = "void foo() {\n    return null;\n}\n";
+        let edit = "void foo() {\n    Objects.requireNonNull(bar);\n    return null;\n}\n";
+        std::fs::write(&target_file, orig).unwrap();
+
+        let patch = generate_patch(
+            orig,
+            edit,
+            &JAVA,
+            "tester",
+            "test",
+            "Foo.java",
+            "UTF-8",
+            &ContextConfig::default(),
+        )
+        .unwrap();
+
+        let repo = PatchRepository::new(&patch_repo);
+        repo.save(&patch, "20260704-test.dpatch").unwrap();
+
+        let config = BatchApplyConfig {
+            work_dir: work_dir.clone(),
+            patch_dir: repo.patches_dir(),
+            report_dir,
+            dry_run: false,
+        };
+
+        let first = apply_all(&config).unwrap();
+        assert_eq!(first.report.summary.success, 1);
+        assert_eq!(first.report.summary.skipped, 0);
+        assert_eq!(first.report.summary.failed, 0);
+
+        let second = apply_all(&config).unwrap();
+        assert_eq!(
+            second.report.summary.skipped, 1,
+            "2回目は冪等スキップとして計上されること: {:?}",
+            second.report.rows
+        );
+        assert_eq!(second.report.summary.failed, 0);
+        assert_eq!(
+            std::fs::read_to_string(&target_file).unwrap(),
+            edit,
+            "内容が変化しないこと"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

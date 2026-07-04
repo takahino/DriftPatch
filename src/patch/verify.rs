@@ -25,12 +25,21 @@ impl std::fmt::Display for VerifyMismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "期待トークン数 {} / 実際 {}, 最初の相違位置: {}",
-            self.expected_len,
-            self.actual_len,
-            self.first_diff_index
-                .map(|i| i.to_string())
-                .unwrap_or_else(|| "-".to_string())
+            "{}",
+            crate::i18n::tr_args(
+                "verify.mismatch",
+                &[
+                    ("expected", &self.expected_len.to_string()),
+                    ("actual", &self.actual_len.to_string()),
+                    (
+                        "index",
+                        &self
+                            .first_diff_index
+                            .map(|i| i.to_string())
+                            .unwrap_or_else(|| "-".to_string())
+                    ),
+                ]
+            )
         )
     }
 }
