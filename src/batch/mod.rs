@@ -10,7 +10,7 @@ use chrono::Local;
 
 use crate::i18n::{tr, tr_args};
 use crate::patch::applier::ApplyError;
-use crate::patch::file_ops::{ApplyOptions, FileOpError, PatchWorkspace};
+use crate::patch::file_ops::{ApplyOptions, FileOpError, PatchWorkspace, PlannedAction};
 use crate::patch::model::{PatchFile, PatchKind};
 use crate::patch::repository::PatchRepository;
 
@@ -78,11 +78,16 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
         let finished_at = Local::now();
         match apply_result {
             Ok(action) => {
+                let status = if action == PlannedAction::AlreadyApplied {
+                    "skipped"
+                } else {
+                    "success"
+                };
                 rows.push(ReportRow {
                     patch_path: patch_rel,
                     patch_id: patch.id,
                     target_file: patch.target_file,
-                    status: "success".to_string(),
+                    status: status.to_string(),
                     error_kind: None,
                     hunk_index: None,
                     action: Some(action.kind_str().to_string()),
@@ -111,7 +116,8 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
 
     let finished_at = Local::now();
     let success_count = rows.iter().filter(|r| r.status == "success").count();
-    let failed_count = rows.len() - success_count;
+    let skipped_count = rows.iter().filter(|r| r.status == "skipped").count();
+    let failed_count = rows.len() - success_count - skipped_count;
 
     let report = BatchReport {
         work_dir: config.work_dir.display().to_string(),
@@ -122,6 +128,7 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
         summary: ReportSummary {
             total: rows.len(),
             success: success_count,
+            skipped: skipped_count,
             failed: failed_count,
         },
         rows,
@@ -347,6 +354,65 @@ mod tests {
 
         let applied = std::fs::read_to_string(&target_file).unwrap();
         assert!(applied.contains("Objects.requireNonNull"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_batch_apply_reapply_reports_skipped() {
+        // 同一パッチディレクトリを2回 apply_all: 2回目は summary.skipped に計上され、
+        // exit 相当（failed）は 0 のままであること
+        let tmp =
+            std::env::temp_dir().join(format!("driftpatch_batch_idem_{}", uuid::Uuid::new_v4()));
+        let work_dir = tmp.join("work");
+        let patch_repo = tmp.join("repo");
+        let report_dir = tmp.join("reports");
+        std::fs::create_dir_all(&work_dir).unwrap();
+
+        let target_file = work_dir.join("Foo.java");
+        let orig = "void foo() {\n    return null;\n}\n";
+        let edit = "void foo() {\n    Objects.requireNonNull(bar);\n    return null;\n}\n";
+        std::fs::write(&target_file, orig).unwrap();
+
+        let patch = generate_patch(
+            orig,
+            edit,
+            &JAVA,
+            "tester",
+            "test",
+            "Foo.java",
+            "UTF-8",
+            &ContextConfig::default(),
+        )
+        .unwrap();
+
+        let repo = PatchRepository::new(&patch_repo);
+        repo.save(&patch, "20260704-test.dpatch").unwrap();
+
+        let config = BatchApplyConfig {
+            work_dir: work_dir.clone(),
+            patch_dir: repo.patches_dir(),
+            report_dir,
+            dry_run: false,
+        };
+
+        let first = apply_all(&config).unwrap();
+        assert_eq!(first.report.summary.success, 1);
+        assert_eq!(first.report.summary.skipped, 0);
+        assert_eq!(first.report.summary.failed, 0);
+
+        let second = apply_all(&config).unwrap();
+        assert_eq!(
+            second.report.summary.skipped, 1,
+            "2回目は冪等スキップとして計上されること: {:?}",
+            second.report.rows
+        );
+        assert_eq!(second.report.summary.failed, 0);
+        assert_eq!(
+            std::fs::read_to_string(&target_file).unwrap(),
+            edit,
+            "内容が変化しないこと"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

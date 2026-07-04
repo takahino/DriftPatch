@@ -7,7 +7,7 @@ pub mod name_gen;
 pub mod repository;
 pub mod verify;
 
-pub use applier::{apply_patch, ApplyError};
+pub use applier::{apply_patch, apply_patch_lenient, ApplyError, LenientApplyOutcome};
 pub use file_ops::{ApplyOptions, FileOpError, PatchWorkspace, PlannedAction};
 pub use generator::{generate_patch, GeneratorError};
 pub use model::PatchKind;

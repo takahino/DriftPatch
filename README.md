@@ -129,7 +129,7 @@ After a run, two files are created in `--report-dir`:
 - `driftpatch-report-YYYYMMDD-HHMMSS.xlsx`
 - `driftpatch-report-YYYYMMDD-HHMMSS.html`
 
-Each row records patch path, target file, status (`success` / `failed`), error kind, and timestamps.
+Each row records patch path, target file, status (`success` / `skipped` / `failed`), error kind, and timestamps. A `skipped` row means the patch was already applied (idempotent detection) — it does not count as a failure.
 
 ### Exit codes
 
@@ -159,6 +159,12 @@ Detected issues:
 Exit code: `1` if any error is found, `0` otherwise.
 
 `apply` analyzes inter-patch dependencies before applying and automatically orders them by base priority `Create -> Modify -> Rename -> Delete`, plus Rename old/new path dependencies. This keeps a batch containing both a Modify on `Old.java` and a Rename `Old.java -> New.java` safe by applying the Modify first.
+
+### Idempotent re-apply
+
+Re-running `apply` against a work directory where some patches were already applied is safe: a `Modify` patch whose target already matches the patch's post-apply content (ignoring whitespace/indent differences) is detected as **already applied** and reported with status `skipped` instead of `failed` or `success`. No file write or `.bak` backup is created for a skipped patch. `Create` and pure `Rename` patches already had equivalent idempotent detection.
+
+This detection is heuristic: for a hunk that only deletes tokens (empty `added_text`), "already applied" is detected by finding the hunk's context tokens adjacent to each other. If a hunk is only partially applied (e.g. one of two expected matches), it is still treated as drift and reported as `failed`, not skipped.
 
 ### Generate patches from a Git commit
 

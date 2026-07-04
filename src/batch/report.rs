@@ -8,6 +8,8 @@ use crate::i18n::{lang, tr};
 pub struct ReportSummary {
     pub total: usize,
     pub success: usize,
+    /// 冪等スキップ（既に適用済みだったため変更なしで成功扱い）の件数
+    pub skipped: usize,
     pub failed: usize,
 }
 
@@ -126,9 +128,10 @@ pub fn write_xlsx_report(report: &BatchReport, path: &Path) -> Result<(), String
             summary_row,
             1,
             &format!(
-                "total={} success={} failed={}{}",
+                "total={} success={} skipped={} failed={}{}",
                 report.summary.total,
                 report.summary.success,
+                report.summary.skipped,
                 report.summary.failed,
                 if report.dry_run { " (dry-run)" } else { "" }
             ),
@@ -153,6 +156,7 @@ pub fn write_html_report(report: &BatchReport, path: &Path) -> Result<(), String
     html.push_str("th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }\n");
     html.push_str("th { background: #f0f0f0; }\n");
     html.push_str(".success { background: #e8f5e9; }\n");
+    html.push_str(".skipped { background: #e3f2fd; }\n");
     html.push_str(".failed { background: #ffebee; }\n");
     html.push_str(".summary { margin-bottom: 16px; }\n");
     html.push_str(".dryrun-banner { background: #fff3e0; border: 1px solid #ffb74d; padding: 12px; margin-bottom: 16px; font-weight: bold; }\n");
@@ -181,11 +185,13 @@ pub fn write_html_report(report: &BatchReport, path: &Path) -> Result<(), String
         report.finished_at
     ));
     html.push_str(&format!(
-        "<p><strong>{}:</strong> {} / <strong>{}:</strong> {} / <strong>{}:</strong> {}</p>\n",
+        "<p><strong>{}:</strong> {} / <strong>{}:</strong> {} / <strong>{}:</strong> {} / <strong>{}:</strong> {}</p>\n",
         tr("report.total"),
         report.summary.total,
         tr("report.success"),
         report.summary.success,
+        tr("report.skipped"),
+        report.summary.skipped,
         tr("report.failed"),
         report.summary.failed
     ));
@@ -208,10 +214,10 @@ pub fn write_html_report(report: &BatchReport, path: &Path) -> Result<(), String
     html.push_str("</tr></thead>\n<tbody>\n");
 
     for row in &report.rows {
-        let row_class = if row.status == "success" {
-            "success"
-        } else {
-            "failed"
+        let row_class = match row.status.as_str() {
+            "success" => "success",
+            "skipped" => "skipped",
+            _ => "failed",
         };
         html.push_str(&format!("<tr class=\"{}\">\n", row_class));
         html.push_str(&format!("<td>{}</td>\n", html_escape(&row.patch_path)));
@@ -264,6 +270,7 @@ mod report_tests {
             summary: ReportSummary {
                 total: 2,
                 success: 1,
+                skipped: 0,
                 failed: 1,
             },
             rows: vec![

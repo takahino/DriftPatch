@@ -137,6 +137,7 @@ pub static CATALOG: &[(&str, &str)] = &[
     ("report.h.end_short", "End"),
     ("report.total", "Total"),
     ("report.success", "Success"),
+    ("report.skipped", "Skipped"),
     ("report.failed", "Failed"),
     // --- Git commit import ---
     ("fc.saved", "Generated and saved"),
@@ -232,7 +233,7 @@ pub static CATALOG: &[(&str, &str)] = &[
     ("cli.apply.done", "Batch apply finished"),
     (
         "cli.summary_line",
-        "  Total: {total} / Success: {success} / Failed: {failed}",
+        "  Total: {total} / Success: {success} / Skipped: {skipped} / Failed: {failed}",
     ),
     ("cli.error", "Error: {err}"),
     ("cli.fc.done", "Patch generation from Git commit finished"),

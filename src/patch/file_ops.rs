@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::encoding::{read_file_auto, write_file_auto};
 use crate::i18n::{tr, tr_args};
 use crate::lexer::profiles::detect_profile;
-use crate::patch::applier::{apply_patch, ApplyError};
+use crate::patch::applier::{apply_patch, apply_patch_lenient, ApplyError};
 use crate::patch::model::{PatchFile, PatchKind};
 use crate::patch::verify::{significant_token_texts, verify_significant_tokens, VerifyMismatch};
 
@@ -286,7 +286,22 @@ impl PatchWorkspace {
         };
 
         let profile = detect_profile(&target_path);
-        let result = apply_patch(&text, patch, profile).map_err(FileOpError::Apply)?;
+        let outcome = apply_patch_lenient(&text, patch, profile).map_err(FileOpError::Apply)?;
+
+        // 全ハンクが「既に適用済み」と判定された場合は冪等ケース: 書込・バックアップ
+        // ともに行わず、現状のテキストのままキャッシュを更新する
+        if outcome.skipped_hunks.len() == patch.hunks.len() && !patch.hunks.is_empty() {
+            self.cache.insert(
+                target_path,
+                FileState::Present {
+                    text,
+                    encoding: detected_enc,
+                },
+            );
+            return Ok(PlannedAction::AlreadyApplied);
+        }
+
+        let result = outcome.text;
         let encoding = choose_encoding(patch, detected_enc);
 
         if !opts.dry_run {
@@ -722,6 +737,55 @@ mod tests {
         assert!(!target.exists());
         let bak = work.join("Bak.java.bak");
         assert_eq!(fs::read_to_string(&bak).unwrap(), content);
+
+        let _ = fs::remove_dir_all(&work);
+    }
+
+    #[test]
+    fn test_modify_reapply_is_already_applied_and_skips_write() {
+        // 同一 Modify パッチを2回適用: 2回目は AlreadyApplied で、
+        // ファイル内容・.bak いずれも変化しないこと
+        let work = temp_workdir("fops_modify_idem");
+        let orig = "void foo() {\n    return null;\n}\n";
+        let edit = "void foo() {\n    Objects.requireNonNull(bar);\n    return null;\n}\n";
+        let target = work.join("Foo.java");
+        fs::write(&target, orig).unwrap();
+
+        let patch = generate_patch(
+            orig,
+            edit,
+            &JAVA,
+            "tester",
+            "t",
+            "Foo.java",
+            "UTF-8",
+            &ContextConfig::default(),
+        )
+        .unwrap();
+
+        let opts = ApplyOptions {
+            dry_run: false,
+            create_backup: true,
+        };
+        let mut ws = PatchWorkspace::new(&work);
+        let first = ws.apply(&patch, &opts).unwrap();
+        assert_eq!(first, PlannedAction::Modify);
+        assert_eq!(fs::read_to_string(&target).unwrap(), edit);
+
+        // 1回目の適用で作られた .bak を削除し、2回目で再作成されないことを確認する
+        let bak = work.join("Foo.java.bak");
+        assert!(bak.exists());
+        fs::remove_file(&bak).unwrap();
+
+        let mut ws2 = PatchWorkspace::new(&work);
+        let second = ws2.apply(&patch, &opts).unwrap();
+        assert_eq!(second, PlannedAction::AlreadyApplied);
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            edit,
+            "内容が変化しないこと"
+        );
+        assert!(!bak.exists(), "冪等ケースでは .bak が作られないこと");
 
         let _ = fs::remove_dir_all(&work);
     }

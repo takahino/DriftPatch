@@ -126,6 +126,9 @@ pub fn import_from_commit(config: &FromCommitConfig) -> Result<FromCommitOutcome
             summary: ReportSummary {
                 total: rows.len(),
                 success: success_count,
+                // from_commit の「スキップ」（バイナリファイル等）は既存の failed 集計に含める。
+                // パッチ適用の冪等スキップ（apply_all）とは意味が異なるためここは常に 0。
+                skipped: 0,
                 failed: failed + skipped,
             },
             rows,

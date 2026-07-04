@@ -141,6 +141,7 @@ pub static CATALOG: &[(&str, &str)] = &[
     ("report.h.end_short", "終了"),
     ("report.total", "合計"),
     ("report.success", "成功"),
+    ("report.skipped", "スキップ"),
     ("report.failed", "失敗"),
     // --- Git コミット取り込み ---
     ("fc.saved", "生成・保存成功"),
@@ -230,7 +231,7 @@ pub static CATALOG: &[(&str, &str)] = &[
     ("cli.apply.done", "一括適用完了"),
     (
         "cli.summary_line",
-        "  合計: {total} / 成功: {success} / 失敗: {failed}",
+        "  合計: {total} / 成功: {success} / スキップ: {skipped} / 失敗: {failed}",
     ),
     ("cli.error", "エラー: {err}"),
     ("cli.fc.done", "Git コミットからのパッチ生成完了"),

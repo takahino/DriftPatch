@@ -129,7 +129,7 @@ driftpatch-batch apply \
 - `driftpatch-report-YYYYMMDD-HHMMSS.xlsx`
 - `driftpatch-report-YYYYMMDD-HHMMSS.html`
 
-各行にはパッチパス、対象ファイル、ステータス（`success` / `failed`）、エラー種別、タイムスタンプが記録される。
+各行にはパッチパス、対象ファイル、ステータス（`success` / `skipped` / `failed`）、エラー種別、タイムスタンプが記録される。`skipped` は既に適用済み（冪等検知）を意味し、失敗としては計上されない。
 
 ### 終了コード
 
@@ -159,6 +159,12 @@ driftpatch-batch check --patch-dir C:\project\patch-repo\patches
 終了コード: 競合 (error) が1件でもあれば `1`、警告のみまたは問題なければ `0`。
 
 `apply` は適用前にパッチ間の依存を解析し、`Create -> Modify -> Rename -> Delete` の基本優先度と Rename の旧パス・新パス依存で自動整列する。そのため「`Old.java` への Modify」と「`Old.java -> New.java` の Rename」が同じバッチにあっても、Modify を先に適用して失敗しない。
+
+### 冪等な再適用
+
+一部のパッチが既に適用済みの work_dir に対して `apply` を再実行しても安全である。対象ファイルの内容が Modify パッチの適用後内容と一致している（空白・インデント差は無視）場合、「適用済み」と検知され、`failed` でも `success` でもなく `skipped` ステータスとして報告される。スキップされたパッチはファイル書き込みも `.bak` バックアップ作成も行わない。`Create` と純 `Rename` パッチは以前から同等の冪等検知を持っていた。
+
+この検知はヒューリスティックである点に注意。トークンを削除するだけのハンク（`added_text` が空）では、ハンクの前後コンテキストトークンが隣接しているかどうかで「適用済み」を判定する。ハンクが部分的にしか適用されていない場合（例: 期待マッチ数2件のうち1件のみ適用済み）はドリフトとして扱われ、スキップではなく `failed` として報告される。
 
 ### Git コミットからパッチ生成
 

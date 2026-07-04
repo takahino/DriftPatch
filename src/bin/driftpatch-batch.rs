@@ -104,6 +104,7 @@ fn main() {
                             &[
                                 ("total", &outcome.report.summary.total.to_string()),
                                 ("success", &outcome.report.summary.success.to_string()),
+                                ("skipped", &outcome.report.summary.skipped.to_string()),
                                 ("failed", &outcome.report.summary.failed.to_string()),
                             ]
                         )
