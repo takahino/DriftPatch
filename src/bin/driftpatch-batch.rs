@@ -5,66 +5,76 @@ use driftpatch::batch::{
     apply_all, check_patches, import_from_commit, BatchApplyConfig, FromCommitConfig,
     PatchCheckConfig,
 };
+use driftpatch::i18n::{lang_from_str, set_lang, tr, tr_args};
 
+// clap の help 属性は Command 構築時（parse 時）に評価されるため、
+// 環境変数 DRIFTPATCH_LANG を parse 前に反映すればヘルプも切り替わる。
+// --lang フラグは parse 後にしか分からないため、ランタイムメッセージにのみ効く。
 #[derive(Parser)]
 #[command(name = "driftpatch-batch")]
-#[command(about = "DriftPatch 一括パッチ適用 CLI")]
+#[command(about = tr("cli.about"))]
 struct Cli {
+    /// メッセージ言語 (ja / en)
+    #[arg(long, global = true, help = tr("cli.lang_help"))]
+    lang: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// workdir と patch dir を指定してパッチを一括適用する
+    #[command(about = tr("cli.apply.about"))]
     Apply {
-        /// 修正対象ファイルのワークディレクトリ
-        #[arg(long)]
+        #[arg(long, help = tr("cli.apply.workdir"))]
         workdir: PathBuf,
-        /// パッチが格納されたディレクトリ（patches/ または repo ルート）
-        #[arg(long)]
+        #[arg(long, help = tr("cli.apply.patch_dir"))]
         patch_dir: PathBuf,
-        /// レポート出力先ディレクトリ
-        #[arg(long)]
+        #[arg(long, help = tr("cli.apply.report_dir"))]
         report_dir: PathBuf,
-        /// ファイルを変更せず、適用可否と予定操作のみレポートする
-        #[arg(long)]
+        #[arg(long, help = tr("cli.apply.dry_run"))]
         dry_run: bool,
     },
-    /// Git コミットから .dpatch を一括生成する
+    #[command(about = tr("cli.fc.about"))]
     FromCommit {
-        /// Git リポジトリパス
-        #[arg(long)]
+        #[arg(long, help = tr("cli.fc.repo"))]
         repo: PathBuf,
-        /// コミット SHA または ref
-        #[arg(long)]
+        #[arg(long, help = tr("cli.fc.commit"))]
         commit: String,
-        /// target_file 相対化の基準ディレクトリ
-        #[arg(long)]
+        #[arg(long, help = tr("cli.fc.workdir"))]
         workdir: PathBuf,
-        /// パッチリポジトリルート（patches/ の親）
-        #[arg(long)]
+        #[arg(long, help = tr("cli.fc.patch_repo"))]
         patch_repo: PathBuf,
-        /// パッチ作者名
-        #[arg(long)]
+        #[arg(long, help = tr("cli.fc.author"))]
         author: Option<String>,
-        /// パッチ説明（未指定時はコミットメッセージ）
-        #[arg(long)]
+        #[arg(long, help = tr("cli.fc.description"))]
         description: Option<String>,
-        /// レポート出力先ディレクトリ（任意）
-        #[arg(long)]
+        #[arg(long, help = tr("cli.fc.report_dir"))]
         report_dir: Option<PathBuf>,
     },
-    /// patch-dir 内のパッチ同士の両立性を適用せずに検査する
+    #[command(about = tr("cli.check.about"))]
     Check {
-        /// パッチが格納されたディレクトリ（patches/ または repo ルート）
-        #[arg(long)]
+        #[arg(long, help = tr("cli.check.patch_dir"))]
         patch_dir: PathBuf,
     },
 }
 
 fn main() {
+    // ヘルプ文言にも効かせるため、環境変数の言語指定は parse 前に反映する
+    if let Ok(env_lang) = std::env::var("DRIFTPATCH_LANG") {
+        if let Some(l) = lang_from_str(&env_lang) {
+            set_lang(l);
+        }
+    }
+
     let cli = Cli::parse();
+
+    // --lang は環境変数より優先する
+    if let Some(ref lang_str) = cli.lang {
+        if let Some(l) = lang_from_str(lang_str) {
+            set_lang(l);
+        }
+    }
 
     match cli.command {
         Commands::Apply {
@@ -83,15 +93,20 @@ fn main() {
             match apply_all(&config) {
                 Ok(outcome) => {
                     if dry_run {
-                        println!("dry-run 完了（ファイルは変更されていません）");
+                        println!("{}", tr("cli.apply.dry_run_done"));
                     } else {
-                        println!("一括適用完了");
+                        println!("{}", tr("cli.apply.done"));
                     }
                     println!(
-                        "  合計: {} / 成功: {} / 失敗: {}",
-                        outcome.report.summary.total,
-                        outcome.report.summary.success,
-                        outcome.report.summary.failed
+                        "{}",
+                        tr_args(
+                            "cli.summary_line",
+                            &[
+                                ("total", &outcome.report.summary.total.to_string()),
+                                ("success", &outcome.report.summary.success.to_string()),
+                                ("failed", &outcome.report.summary.failed.to_string()),
+                            ]
+                        )
                     );
                     println!("  Excel: {}", outcome.xlsx_path.display());
                     println!("  HTML:  {}", outcome.html_path.display());
@@ -101,7 +116,7 @@ fn main() {
                     }
                 }
                 Err(e) => {
-                    eprintln!("エラー: {}", e);
+                    eprintln!("{}", tr_args("cli.error", &[("err", &e)]));
                     std::process::exit(1);
                 }
             }
@@ -127,10 +142,17 @@ fn main() {
 
             match import_from_commit(&config) {
                 Ok(outcome) => {
-                    println!("Git コミットからのパッチ生成完了");
+                    println!("{}", tr("cli.fc.done"));
                     println!(
-                        "  保存: {} / スキップ: {} / 失敗: {}",
-                        outcome.saved, outcome.skipped, outcome.failed
+                        "{}",
+                        tr_args(
+                            "cli.fc.summary",
+                            &[
+                                ("saved", &outcome.saved.to_string()),
+                                ("skipped", &outcome.skipped.to_string()),
+                                ("failed", &outcome.failed.to_string()),
+                            ]
+                        )
                     );
                     if let Some(ref xlsx) = outcome.xlsx_path {
                         println!("  Excel: {}", xlsx.display());
@@ -144,7 +166,7 @@ fn main() {
                     }
                 }
                 Err(e) => {
-                    eprintln!("エラー: {}", e);
+                    eprintln!("{}", tr_args("cli.error", &[("err", &e)]));
                     std::process::exit(1);
                 }
             }
@@ -158,16 +180,31 @@ fn main() {
                     let warnings: Vec<_> = outcome.warnings().collect();
 
                     if errors.is_empty() && warnings.is_empty() {
-                        println!("OK: 競合は検出されませんでした ({})", outcome.patch_dir);
+                        println!(
+                            "{}",
+                            tr_args("cli.check.ok", &[("dir", &outcome.patch_dir)])
+                        );
                     } else {
                         if !warnings.is_empty() {
-                            println!("警告 ({} 件):", warnings.len());
+                            println!(
+                                "{}",
+                                tr_args(
+                                    "cli.check.warnings",
+                                    &[("count", &warnings.len().to_string())]
+                                )
+                            );
                             for f in &warnings {
                                 println!("  - {}", f.describe());
                             }
                         }
                         if !errors.is_empty() {
-                            println!("競合 ({} 件):", errors.len());
+                            println!(
+                                "{}",
+                                tr_args(
+                                    "cli.check.errors",
+                                    &[("count", &errors.len().to_string())]
+                                )
+                            );
                             for f in &errors {
                                 println!("  - {}", f.describe());
                             }
@@ -179,7 +216,7 @@ fn main() {
                     }
                 }
                 Err(e) => {
-                    eprintln!("エラー: {}", e);
+                    eprintln!("{}", tr_args("cli.error", &[("err", &e)]));
                     std::process::exit(1);
                 }
             }

@@ -64,7 +64,7 @@ pub fn import_from_commit(config: &FromCommitConfig) -> Result<FromCommitOutcome
                     error_kind: None,
                     hunk_index: None,
                     action: Some(item.patch.kind.label().to_string()),
-                    message: "生成・保存成功".to_string(),
+                    message: crate::i18n::tr("fc.saved").to_string(),
                     started_at: row_started.format("%Y-%m-%d %H:%M:%S").to_string(),
                     finished_at: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
                 });
@@ -131,17 +131,18 @@ pub fn import_from_commit(config: &FromCommitConfig) -> Result<FromCommitOutcome
             rows,
         };
 
-        std::fs::create_dir_all(report_dir)
-            .map_err(|e| format!("レポートディレクトリ作成エラー: {}", e))?;
+        std::fs::create_dir_all(report_dir).map_err(|e| {
+            crate::i18n::tr_args("batch.report_dir_error", &[("err", &e.to_string())])
+        })?;
 
         let stamp = started_at.format("%Y%m%d-%H%M%S").to_string();
         let xlsx_path = report_dir.join(format!("driftpatch-from-commit-{}.xlsx", stamp));
         let html_path = report_dir.join(format!("driftpatch-from-commit-{}.html", stamp));
 
         write_xlsx_report(&report, &xlsx_path)
-            .map_err(|e| format!("Excel レポート出力エラー: {}", e))?;
+            .map_err(|e| crate::i18n::tr_args("batch.xlsx_error", &[("err", &e)]))?;
         write_html_report(&report, &html_path)
-            .map_err(|e| format!("HTML レポート出力エラー: {}", e))?;
+            .map_err(|e| crate::i18n::tr_args("batch.html_error", &[("err", &e)]))?;
 
         outcome.report = Some(report);
         outcome.xlsx_path = Some(xlsx_path);

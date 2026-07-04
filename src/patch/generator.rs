@@ -15,10 +15,15 @@ pub enum GeneratorError {
 
 impl std::fmt::Display for GeneratorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::i18n::{tr, tr_args};
         match self {
-            GeneratorError::NoDiff => write!(f, "変更が見つかりませんでした"),
+            GeneratorError::NoDiff => write!(f, "{}", tr("gen.no_diff")),
             GeneratorError::NoMatch { hunk_index } => {
-                write!(f, "ハンク {} の適用箇所が見つかりませんでした", hunk_index)
+                write!(
+                    f,
+                    "{}",
+                    tr_args("apply.no_match", &[("hunk", &hunk_index.to_string())])
+                )
             }
         }
     }

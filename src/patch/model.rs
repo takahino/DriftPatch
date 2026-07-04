@@ -21,13 +21,14 @@ pub enum PatchKind {
 }
 
 impl PatchKind {
-    /// GUI / レポート表示用の日本語ラベル
+    /// GUI / レポート表示用のラベル（現在の言語で解決される）
     pub fn label(&self) -> &'static str {
+        use crate::i18n::tr;
         match self {
-            PatchKind::Modify => "変更",
-            PatchKind::Create => "新規作成",
-            PatchKind::Delete => "削除",
-            PatchKind::Rename => "リネーム",
+            PatchKind::Modify => tr("kind.modify"),
+            PatchKind::Create => tr("kind.create"),
+            PatchKind::Delete => tr("kind.delete"),
+            PatchKind::Rename => tr("kind.rename"),
         }
     }
 }
@@ -61,37 +62,37 @@ impl PatchFile {
     /// kind と付随フィールドの整合性を検証する。
     /// 不正なパッチによる誤削除・誤リネームを防ぐため、保存前・適用前に呼ぶ。
     pub fn validate(&self) -> Result<(), String> {
+        use crate::i18n::{tr, tr_args};
         match self.kind {
             PatchKind::Modify | PatchKind::Create => {
                 if self.old_path.is_some() {
-                    return Err(format!(
-                        "{}パッチに old_path は指定できません",
-                        self.kind.label()
+                    return Err(tr_args(
+                        "model.no_old_path_for_kind",
+                        &[("kind", self.kind.label())],
                     ));
                 }
             }
             PatchKind::Delete => {
                 if self.verify_tokens.is_none() {
-                    return Err(
-                        "削除パッチには verify_tokens（内容検証情報）が必要です".to_string()
-                    );
+                    return Err(tr("model.delete_requires_verify").to_string());
                 }
                 if !self.hunks.is_empty() {
-                    return Err("削除パッチに hunks は指定できません".to_string());
+                    return Err(tr("model.delete_no_hunks").to_string());
                 }
                 if self.old_path.is_some() {
-                    return Err("削除パッチに old_path は指定できません".to_string());
+                    return Err(tr_args(
+                        "model.no_old_path_for_kind",
+                        &[("kind", self.kind.label())],
+                    ));
                 }
             }
             PatchKind::Rename => {
                 if self.old_path.as_deref().map_or(true, |p| p.is_empty()) {
-                    return Err("リネームパッチには old_path が必要です".to_string());
+                    return Err(tr("model.rename_requires_old_path").to_string());
                 }
                 // 純リネーム（内容変更なし）は verify_tokens で移動前の内容を検証する
                 if self.hunks.is_empty() && self.verify_tokens.is_none() {
-                    return Err(
-                        "内容変更のないリネームパッチには verify_tokens が必要です".to_string()
-                    );
+                    return Err(tr("model.pure_rename_requires_verify").to_string());
                 }
             }
         }

@@ -17,16 +17,21 @@ pub enum RepoError {
 
 impl std::fmt::Display for RepoError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::i18n::tr_args;
         match self {
-            RepoError::Io(e) => write!(f, "I/Oエラー: {}", e),
-            RepoError::Json(e) => write!(f, "JSONエラー: {}", e),
-            RepoError::InvalidPath(p) => write!(f, "パスが無効: {}", p),
+            RepoError::Io(e) => write!(f, "{}", tr_args("repo.io", &[("err", &e.to_string())])),
+            RepoError::Json(e) => write!(f, "{}", tr_args("repo.json", &[("err", &e.to_string())])),
+            RepoError::InvalidPath(p) => {
+                write!(f, "{}", tr_args("repo.invalid_path", &[("path", p)]))
+            }
             RepoError::UnsupportedVersion(v) => write!(
                 f,
-                "未対応のパッチフォーマットバージョンです: {}（新しい DriftPatch で作成された可能性があります）",
-                v
+                "{}",
+                tr_args("repo.unsupported_version", &[("version", v)])
             ),
-            RepoError::InvalidPatch(msg) => write!(f, "パッチが不正: {}", msg),
+            RepoError::InvalidPatch(msg) => {
+                write!(f, "{}", tr_args("common.invalid_patch", &[("msg", msg)]))
+            }
         }
     }
 }
@@ -70,7 +75,9 @@ impl PatchRepository {
     /// パッチを保存する。`patches/<target_file>/<filename>` に配置する。
     pub fn save(&self, patch: &PatchFile, filename: &str) -> Result<PathBuf, RepoError> {
         if patch.target_file.is_empty() {
-            return Err(RepoError::InvalidPath("target_file が空です".to_string()));
+            return Err(RepoError::InvalidPath(
+                crate::i18n::tr("common.empty_target").to_string(),
+            ));
         }
         // 不正なパッチ（例: verify_tokens のない削除パッチ）の保存を防ぐ
         patch.validate().map_err(RepoError::InvalidPatch)?;

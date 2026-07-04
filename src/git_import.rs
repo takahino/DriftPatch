@@ -64,11 +64,14 @@ pub enum GitError {
 
 impl std::fmt::Display for GitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::i18n::{tr, tr_args};
         match self {
-            GitError::NotARepo => write!(f, "Git リポジトリではありません"),
-            GitError::InvalidCommit(c) => write!(f, "無効なコミット: {}", c),
-            GitError::Git2(e) => write!(f, "Git エラー: {}", e),
-            GitError::Io(e) => write!(f, "I/O エラー: {}", e),
+            GitError::NotARepo => write!(f, "{}", tr("git.not_a_repo")),
+            GitError::InvalidCommit(c) => {
+                write!(f, "{}", tr_args("git.invalid_commit", &[("commit", c)]))
+            }
+            GitError::Git2(e) => write!(f, "{}", tr_args("git.git2", &[("err", &e.to_string())])),
+            GitError::Io(e) => write!(f, "{}", tr_args("git.io", &[("err", &e.to_string())])),
         }
     }
 }
@@ -165,7 +168,7 @@ pub fn generate_patches_from_commit(
                 {
                     skipped.push(SkippedEntry {
                         path: path.replace('\\', "/"),
-                        reason: "バイナリファイルはスキップ".to_string(),
+                        reason: crate::i18n::tr("git.skip_binary").to_string(),
                     });
                 }
                 return true;
@@ -196,7 +199,7 @@ pub fn generate_patches_from_commit(
                         config,
                     )
                     .map(|item| vec![item]),
-                    None => Err("リネーム元パスが取得できません".to_string()),
+                    None => Err(crate::i18n::tr("git.no_rename_old").to_string()),
                 },
                 FileChangeStatus::Added | FileChangeStatus::Modified => build_content_patches(
                     &repo,
@@ -254,10 +257,10 @@ fn build_content_patches(
     };
     let after_bytes = read_blob_from_tree(repo, commit_tree, &git_path)
         .unwrap_or(None)
-        .ok_or_else(|| "コミット後のファイル内容が取得できません".to_string())?;
+        .ok_or_else(|| crate::i18n::tr("git.no_after_content").to_string())?;
 
     if is_binary_content(before_bytes.as_deref()) || is_binary_content(Some(&after_bytes)) {
-        return Err("バイナリファイルはスキップ".to_string());
+        return Err(crate::i18n::tr("git.skip_binary").to_string());
     }
 
     let (before_text, _) = decode_bytes(before_bytes.as_deref().unwrap_or(&[]));
@@ -310,14 +313,14 @@ fn build_delete_patch(
     let git_path = git_path.replace('\\', "/");
     let target_file = to_work_dir_relative_lenient(&git_path)?;
 
-    let parent = parent_tree
-        .ok_or_else(|| "親コミットがないため削除前の内容を取得できません".to_string())?;
+    let parent =
+        parent_tree.ok_or_else(|| crate::i18n::tr("git.no_parent_for_delete").to_string())?;
     let before_bytes = read_blob_from_tree(repo, parent, &git_path)
         .unwrap_or(None)
-        .ok_or_else(|| "削除前のファイル内容が取得できません".to_string())?;
+        .ok_or_else(|| crate::i18n::tr("git.no_before_content").to_string())?;
 
     if is_binary_content(Some(&before_bytes)) {
-        return Err("バイナリファイルはスキップ".to_string());
+        return Err(crate::i18n::tr("git.skip_binary").to_string());
     }
 
     let (before_text, encoding) = decode_bytes(&before_bytes);
@@ -365,17 +368,17 @@ fn build_rename_patch(
     let old_rel = to_work_dir_relative_lenient(&old_git_path)?;
     let target_file = to_work_dir_relative_lenient(&new_git_path)?;
 
-    let parent = parent_tree
-        .ok_or_else(|| "親コミットがないためリネーム元の内容を取得できません".to_string())?;
+    let parent =
+        parent_tree.ok_or_else(|| crate::i18n::tr("git.no_parent_for_rename").to_string())?;
     let before_bytes = read_blob_from_tree(repo, parent, &old_git_path)
         .unwrap_or(None)
-        .ok_or_else(|| "リネーム前のファイル内容が取得できません".to_string())?;
+        .ok_or_else(|| crate::i18n::tr("git.no_rename_before").to_string())?;
     let after_bytes = read_blob_from_tree(repo, commit_tree, &new_git_path)
         .unwrap_or(None)
-        .ok_or_else(|| "リネーム後のファイル内容が取得できません".to_string())?;
+        .ok_or_else(|| crate::i18n::tr("git.no_rename_after").to_string())?;
 
     if is_binary_content(Some(&before_bytes)) || is_binary_content(Some(&after_bytes)) {
-        return Err("バイナリファイルはスキップ".to_string());
+        return Err(crate::i18n::tr("git.skip_binary").to_string());
     }
 
     let (before_text, _) = decode_bytes(&before_bytes);
@@ -436,12 +439,8 @@ fn build_rename_patch(
 }
 
 fn generator_error_reason(e: GeneratorError) -> String {
-    match e {
-        GeneratorError::NoDiff => "変更が見つかりませんでした".to_string(),
-        GeneratorError::NoMatch { hunk_index } => {
-            format!("ハンク {} の適用箇所が見つかりませんでした", hunk_index)
-        }
-    }
+    // GeneratorError の Display（i18n 済み）に委譲する
+    e.to_string()
 }
 
 struct SplitPatch {
@@ -622,10 +621,13 @@ fn canonicalize_or_self(path: &Path) -> Result<PathBuf, GitError> {
 fn to_work_dir_relative_lenient(git_path: &str) -> Result<String, String> {
     let normalized = git_path.replace('\\', "/");
     if normalized.is_empty() {
-        return Err("パスが空です".to_string());
+        return Err(crate::i18n::tr("git.empty_path").to_string());
     }
     if normalized.split('/').any(|seg| seg == "..") {
-        return Err(format!("不正なパス（work_dir 外参照）: {}", git_path));
+        return Err(crate::i18n::tr_args(
+            "git.path_outside",
+            &[("path", git_path)],
+        ));
     }
     Ok(normalized)
 }
@@ -634,17 +636,19 @@ fn to_work_dir_relative_lenient(git_path: &str) -> Result<String, String> {
 fn to_work_dir_relative(work_dir: &Path, git_path: &str) -> Result<String, String> {
     let file_path = work_dir.join(git_path.replace('/', std::path::MAIN_SEPARATOR_STR));
     let file_canon = std::fs::canonicalize(&file_path).map_err(|_| {
-        format!(
-            "work_dir 配下にファイルがありません: {} (work_dir: {})",
-            git_path,
-            work_dir.display()
+        crate::i18n::tr_args(
+            "git.not_under_workdir_missing",
+            &[
+                ("path", git_path),
+                ("work_dir", &work_dir.display().to_string()),
+            ],
         )
     })?;
 
     let work_canon = canonicalize_or_self(work_dir).map_err(|e| e.to_string())?;
     let rel = file_canon
         .strip_prefix(&work_canon)
-        .map_err(|_| format!("対象ファイルが work_dir 配下にありません: {}", git_path))?;
+        .map_err(|_| crate::i18n::tr_args("git.not_under_workdir", &[("path", git_path)]))?;
 
     Ok(rel.to_str().unwrap_or("").replace('\\', "/"))
 }

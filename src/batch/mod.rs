@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use chrono::Local;
 
+use crate::i18n::{tr, tr_args};
 use crate::patch::applier::ApplyError;
 use crate::patch::file_ops::{ApplyOptions, FileOpError, PatchWorkspace};
 use crate::patch::model::{PatchFile, PatchKind};
@@ -40,7 +41,7 @@ pub struct BatchApplyOutcome {
 pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String> {
     let started_at = Local::now();
     let patches = PatchRepository::list_from_dir(&config.patch_dir)
-        .map_err(|e| format!("パッチ列挙エラー: {}", e))?;
+        .map_err(|e| tr_args("batch.list_error", &[("err", &e.to_string())]))?;
 
     // Rename 導入後に辞書順では破綻する依存（Old.java への Modify vs Old→New の Rename など）を
     // 吸収するため、kind / created_at / Rename の依存関係に基づき適用順を整列する。
@@ -65,7 +66,7 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
                 error_kind: Some("InvalidTarget".to_string()),
                 hunk_index: None,
                 action: None,
-                message: "target_file が空です".to_string(),
+                message: tr("common.empty_target").to_string(),
                 started_at: row_started.format("%Y-%m-%d %H:%M:%S").to_string(),
                 finished_at: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             });
@@ -127,7 +128,7 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
     };
 
     std::fs::create_dir_all(&config.report_dir)
-        .map_err(|e| format!("レポートディレクトリ作成エラー: {}", e))?;
+        .map_err(|e| tr_args("batch.report_dir_error", &[("err", &e.to_string())]))?;
 
     let stamp = started_at.format("%Y%m%d-%H%M%S").to_string();
     let xlsx_path = config
@@ -138,9 +139,9 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
         .join(format!("driftpatch-report-{}.html", stamp));
 
     write_xlsx_report(&report, &xlsx_path)
-        .map_err(|e| format!("Excel レポート出力エラー: {}", e))?;
+        .map_err(|e| tr_args("batch.xlsx_error", &[("err", &e)]))?;
     write_html_report(&report, &html_path)
-        .map_err(|e| format!("HTML レポート出力エラー: {}", e))?;
+        .map_err(|e| tr_args("batch.html_error", &[("err", &e)]))?;
 
     Ok(BatchApplyOutcome {
         report,
@@ -274,32 +275,20 @@ fn classify_file_op_error(err: &FileOpError) -> (String, Option<usize>, String) 
 }
 
 fn classify_apply_error(err: &ApplyError) -> (String, Option<usize>, String) {
+    // メッセージ本文は ApplyError の Display（i18n 済み）に委譲する
     match err {
-        ApplyError::NoMatch { hunk_index } => (
-            "NoMatch".to_string(),
-            Some(*hunk_index),
-            format!("ハンク {} の適用箇所が見つかりませんでした", hunk_index),
-        ),
-        ApplyError::CountMismatch {
-            hunk_index,
-            expected,
-            actual,
-            positions,
-        } => (
+        ApplyError::NoMatch { hunk_index } => {
+            ("NoMatch".to_string(), Some(*hunk_index), err.to_string())
+        }
+        ApplyError::CountMismatch { hunk_index, .. } => (
             "CountMismatch".to_string(),
             Some(*hunk_index),
-            format!(
-                "ハンク {} の期待マッチ数 {} と実際のマッチ数 {} が一致しません。位置: {:?}",
-                hunk_index, expected, actual, positions
-            ),
+            err.to_string(),
         ),
         ApplyError::OverlappingMatches { hunk_index } => (
             "OverlappingMatches".to_string(),
             Some(*hunk_index),
-            format!(
-                "ハンク {} の複数マッチの置換範囲が重なっています",
-                hunk_index
-            ),
+            err.to_string(),
         ),
     }
 }

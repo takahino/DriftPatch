@@ -2,6 +2,8 @@ use std::path::Path;
 
 use rust_xlsxwriter::{Format, Workbook};
 
+use crate::i18n::{lang, tr};
+
 #[derive(Debug, Clone)]
 pub struct ReportSummary {
     pub total: usize,
@@ -49,7 +51,7 @@ pub fn write_xlsx_report(report: &BatchReport, path: &Path) -> Result<(), String
     // dry-run 時は先頭にバナー行を入れてデータ行を 1 行下げる
     let data_start: u32 = if report.dry_run {
         worksheet
-            .write_string_with_format(0, 0, "DRY-RUN（ファイルは変更されていません）", &header)
+            .write_string_with_format(0, 0, tr("report.dryrun_xlsx"), &header)
             .map_err(|e| e.to_string())?;
         1
     } else {
@@ -57,16 +59,16 @@ pub fn write_xlsx_report(report: &BatchReport, path: &Path) -> Result<(), String
     };
 
     let headers = [
-        "パッチパス",
-        "パッチID",
-        "対象ファイル",
-        "ステータス",
-        "操作",
-        "エラー種別",
-        "ハンク番号",
-        "メッセージ",
-        "開始時刻",
-        "終了時刻",
+        tr("report.h.patch_path"),
+        tr("report.h.patch_id"),
+        tr("report.h.target"),
+        tr("report.h.status"),
+        tr("report.h.action"),
+        tr("report.h.error_kind"),
+        tr("report.h.hunk"),
+        tr("report.h.message"),
+        tr("report.h.started"),
+        tr("report.h.finished"),
     ];
 
     for (col, title) in headers.iter().enumerate() {
@@ -117,7 +119,7 @@ pub fn write_xlsx_report(report: &BatchReport, path: &Path) -> Result<(), String
 
     let summary_row = data_start + (report.rows.len() + 2) as u32;
     worksheet
-        .write_string(summary_row, 0, "サマリ")
+        .write_string(summary_row, 0, tr("report.summary"))
         .map_err(|e| e.to_string())?;
     worksheet
         .write_string(
@@ -139,9 +141,12 @@ pub fn write_xlsx_report(report: &BatchReport, path: &Path) -> Result<(), String
 
 pub fn write_html_report(report: &BatchReport, path: &Path) -> Result<(), String> {
     let mut html = String::new();
-    html.push_str("<!DOCTYPE html>\n<html lang=\"ja\">\n<head>\n");
+    html.push_str(&format!(
+        "<!DOCTYPE html>\n<html lang=\"{}\">\n<head>\n",
+        lang().code()
+    ));
     html.push_str("<meta charset=\"UTF-8\">\n");
-    html.push_str("<title>DriftPatch Apply Report</title>\n");
+    html.push_str(&format!("<title>{}</title>\n", tr("report.title")));
     html.push_str("<style>\n");
     html.push_str("body { font-family: sans-serif; margin: 24px; }\n");
     html.push_str("table { border-collapse: collapse; width: 100%; }\n");
@@ -152,11 +157,12 @@ pub fn write_html_report(report: &BatchReport, path: &Path) -> Result<(), String
     html.push_str(".summary { margin-bottom: 16px; }\n");
     html.push_str(".dryrun-banner { background: #fff3e0; border: 1px solid #ffb74d; padding: 12px; margin-bottom: 16px; font-weight: bold; }\n");
     html.push_str("</style>\n</head>\n<body>\n");
-    html.push_str("<h1>DriftPatch パッチ適用レポート</h1>\n");
+    html.push_str(&format!("<h1>{}</h1>\n", tr("report.title")));
     if report.dry_run {
-        html.push_str(
-            "<div class=\"dryrun-banner\">DRY-RUN: 適用可否の判定のみ行いました。ファイルは変更されていません。</div>\n",
-        );
+        html.push_str(&format!(
+            "<div class=\"dryrun-banner\">{}</div>\n",
+            tr("report.dryrun_html")
+        ));
     }
     html.push_str("<div class=\"summary\">\n");
     html.push_str(&format!(
@@ -168,26 +174,34 @@ pub fn write_html_report(report: &BatchReport, path: &Path) -> Result<(), String
         html_escape(&report.patch_dir)
     ));
     html.push_str(&format!(
-        "<p><strong>開始:</strong> {} / <strong>終了:</strong> {}</p>\n",
-        report.started_at, report.finished_at
+        "<p><strong>{}:</strong> {} / <strong>{}:</strong> {}</p>\n",
+        tr("report.h.start_short"),
+        report.started_at,
+        tr("report.h.end_short"),
+        report.finished_at
     ));
     html.push_str(&format!(
-        "<p><strong>合計:</strong> {} / <strong>成功:</strong> {} / <strong>失敗:</strong> {}</p>\n",
-        report.summary.total, report.summary.success, report.summary.failed
+        "<p><strong>{}:</strong> {} / <strong>{}:</strong> {} / <strong>{}:</strong> {}</p>\n",
+        tr("report.total"),
+        report.summary.total,
+        tr("report.success"),
+        report.summary.success,
+        tr("report.failed"),
+        report.summary.failed
     ));
     html.push_str("</div>\n");
     html.push_str("<table>\n<thead><tr>\n");
     for h in [
-        "パッチパス",
-        "パッチID",
-        "対象ファイル",
-        "ステータス",
-        "操作",
-        "エラー種別",
-        "ハンク番号",
-        "メッセージ",
-        "開始",
-        "終了",
+        tr("report.h.patch_path"),
+        tr("report.h.patch_id"),
+        tr("report.h.target"),
+        tr("report.h.status"),
+        tr("report.h.action"),
+        tr("report.h.error_kind"),
+        tr("report.h.hunk"),
+        tr("report.h.message"),
+        tr("report.h.start_short"),
+        tr("report.h.end_short"),
     ] {
         html.push_str(&format!("<th>{}</th>\n", h));
     }

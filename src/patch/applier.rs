@@ -19,9 +19,14 @@ pub enum ApplyError {
 
 impl std::fmt::Display for ApplyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::i18n::tr_args;
         match self {
             ApplyError::NoMatch { hunk_index } => {
-                write!(f, "ハンク {} の適用箇所が見つかりませんでした", hunk_index)
+                write!(
+                    f,
+                    "{}",
+                    tr_args("apply.no_match", &[("hunk", &hunk_index.to_string())])
+                )
             }
             ApplyError::CountMismatch {
                 hunk_index,
@@ -31,15 +36,23 @@ impl std::fmt::Display for ApplyError {
             } => {
                 write!(
                     f,
-                    "ハンク {} の期待マッチ数 {} と実際のマッチ数 {} が一致しません。位置: {:?}",
-                    hunk_index, expected, actual, positions
+                    "{}",
+                    tr_args(
+                        "apply.count_mismatch",
+                        &[
+                            ("hunk", &hunk_index.to_string()),
+                            ("expected", &expected.to_string()),
+                            ("actual", &actual.to_string()),
+                            ("positions", &format!("{:?}", positions)),
+                        ]
+                    )
                 )
             }
             ApplyError::OverlappingMatches { hunk_index } => {
                 write!(
                     f,
-                    "ハンク {} の複数マッチの置換範囲が重なっています",
-                    hunk_index
+                    "{}",
+                    tr_args("apply.overlapping", &[("hunk", &hunk_index.to_string())])
                 )
             }
         }
