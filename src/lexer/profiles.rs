@@ -102,6 +102,44 @@ pub const GENERIC: LanguageProfile = LanguageProfile {
     triple_quote: false,
 };
 
+pub const JSON: LanguageProfile = LanguageProfile {
+    name: "json",
+    extensions: &["json"],
+    line_comments: &[],
+    block_comment: None,
+    string_delimiters: &['"'],
+    triple_quote: false,
+};
+
+pub const YAML: LanguageProfile = LanguageProfile {
+    name: "yaml",
+    extensions: &["yml", "yaml"],
+    line_comments: &["#"],
+    block_comment: None,
+    string_delimiters: &['"', '\''],
+    triple_quote: false,
+};
+
+pub const PROPERTIES: LanguageProfile = LanguageProfile {
+    name: "properties",
+    extensions: &["properties"],
+    line_comments: &["#", "!"],
+    block_comment: None,
+    // properties の値中には `'` や `"` が引用符としてではなく素の文字として現れうる
+    // （例: it's）ため、誤って文字列リテラル扱いにしないようクォートは無効化する
+    string_delimiters: &[],
+    triple_quote: false,
+};
+
+pub const XML: LanguageProfile = LanguageProfile {
+    name: "xml",
+    extensions: &["xml", "xsd", "xsl", "xslt", "svg", "xhtml", "html", "htm"],
+    line_comments: &[],
+    block_comment: Some(("<!--", "-->")),
+    string_delimiters: &['"', '\''],
+    triple_quote: false,
+};
+
 pub const ALL_PROFILES: &[&LanguageProfile] = &[
     &JAVA,
     &PYTHON,
@@ -112,6 +150,10 @@ pub const ALL_PROFILES: &[&LanguageProfile] = &[
     &CSHARP,
     &GO,
     &PLSQL,
+    &JSON,
+    &YAML,
+    &PROPERTIES,
+    &XML,
 ];
 
 /// ファイルパスの拡張子からプロファイルを選択する。
@@ -179,5 +221,33 @@ mod tests {
     fn test_detect_generic() {
         let p = detect_profile(&PathBuf::from("file.xyz"));
         assert_eq!(p.name, "generic");
+    }
+
+    #[test]
+    fn test_detect_json() {
+        let p = detect_profile(&PathBuf::from("config.json"));
+        assert_eq!(p.name, "json");
+    }
+
+    #[test]
+    fn test_detect_yaml() {
+        let p = detect_profile(&PathBuf::from("docker-compose.yml"));
+        assert_eq!(p.name, "yaml");
+        let p2 = detect_profile(&PathBuf::from("values.yaml"));
+        assert_eq!(p2.name, "yaml");
+    }
+
+    #[test]
+    fn test_detect_properties() {
+        let p = detect_profile(&PathBuf::from("application.properties"));
+        assert_eq!(p.name, "properties");
+    }
+
+    #[test]
+    fn test_detect_xml() {
+        let p = detect_profile(&PathBuf::from("pom.xml"));
+        assert_eq!(p.name, "xml");
+        let p2 = detect_profile(&PathBuf::from("index.html"));
+        assert_eq!(p2.name, "xml");
     }
 }

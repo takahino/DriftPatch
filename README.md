@@ -292,9 +292,15 @@ A `.dpatch` file is JSON with the following structure.
 | C# | `.cs`, `.csx` |
 | Go | `.go` |
 | PL/SQL | `.pls`, `.pks`, `.pkb`, `.pck`, `.psc`, `.plsql` |
+| JSON | `.json` |
+| YAML | `.yml`, `.yaml` |
+| properties | `.properties` |
+| XML/HTML | `.xml`, `.xsd`, `.xsl`, `.xslt`, `.svg`, `.xhtml`, `.html`, `.htm` |
 | Generic | All other extensions |
 
 Unrecognized extensions use the generic profile (line comments `//`, block comments `/* */`).
+
+Notes on the config-file profiles: `properties` treats both `#` and `!` as line comments and disables quote-delimited strings entirely (a bare `'` in a value like `it's` would otherwise be misread as a string start); a value containing `#` or `!` is therefore treated as a comment from that point on, same as in a real `.properties` file. `YAML` treats `#` as a line comment outside of quoted strings, so `key: value  # note` works, but an unquoted `foo#bar` (no preceding space) is also read as a comment start, matching common YAML linters' expectations more loosely than a full YAML parser would.
 
 ## Troubleshooting
 
