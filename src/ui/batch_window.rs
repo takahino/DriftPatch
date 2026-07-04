@@ -16,7 +16,7 @@ pub fn render_batch_window(app: &mut DriftPatchApp, ctx: &Context) {
     let mut open = true;
     let mut do_apply = false;
     let mut do_check = false;
-    let mut close = false;
+    let close = false;
 
     egui::Window::new(tr("gui.win_batch"))
         .open(&mut open)

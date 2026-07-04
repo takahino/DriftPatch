@@ -437,4 +437,13 @@ pub static CATALOG: &[(&str, &str)] = &[
         "custom_profile.parse_error",
         "Failed to parse profiles.json: {path}: {err}",
     ),
+    // --- D&D / recent files ---
+    ("gui.btn_recent", "🕘 Recent files"),
+    ("gui.recent_empty", "(No history)"),
+    ("gui.recent_clear", "Clear history"),
+    (
+        "gui.recent_file_missing",
+        "File not found (removed from history): {path}",
+    ),
+    ("gui.drop_to_open", "Drop to open"),
 ];

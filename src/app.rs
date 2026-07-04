@@ -39,6 +39,22 @@ pub struct Settings {
     /// エディタ3列のフォントサイズ
     #[serde(default = "default_font_size")]
     pub font_size: f32,
+    /// 最近使ったファイル（新しい順、最大 MAX_RECENT_FILES 件）
+    #[serde(default)]
+    pub recent_files: Vec<String>,
+}
+
+/// 最近使ったファイル履歴の保持上限
+const MAX_RECENT_FILES: usize = 10;
+
+/// 最近使ったファイル履歴の先頭に `path` を追加する（重複除去・最大件数維持）。
+/// 保存（`Settings::save`）は呼び出し側の責務。設定ファイル I/O を伴わない
+/// 純粋なロジックとして分離し、単体テストできるようにしている。
+fn push_recent_file(recent: &mut Vec<String>, path: impl Into<String>) {
+    let path = path.into();
+    recent.retain(|p| p != &path);
+    recent.insert(0, path);
+    recent.truncate(MAX_RECENT_FILES);
 }
 
 fn default_create_backup() -> bool {
@@ -63,6 +79,7 @@ impl Default for Settings {
             create_backup: default_create_backup(),
             ui_language: default_ui_language(),
             font_size: default_font_size(),
+            recent_files: Vec::new(),
         }
     }
 }
@@ -259,6 +276,7 @@ impl DriftPatchApp {
                 self.selected_patch = None;
 
                 self.reload_patches();
+                self.add_recent_file(&path);
 
                 let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
                 self.status_message = tr_args(
@@ -269,6 +287,24 @@ impl DriftPatchApp {
             Err(e) => {
                 self.status_message = tr_args("gui.open_error", &[("err", &e.to_string())]);
             }
+        }
+    }
+
+    /// 最近使ったファイル履歴を先頭に追加する（重複除去・最大件数維持・即保存）
+    fn add_recent_file(&mut self, path: &Path) {
+        push_recent_file(&mut self.settings.recent_files, path.to_string_lossy());
+        self.settings.save();
+    }
+
+    /// 最近使ったファイル履歴からファイルを開く。存在しなければ履歴から除去してエラー表示する
+    pub fn open_recent(&mut self, path_str: &str) {
+        let path = PathBuf::from(path_str);
+        if path.exists() {
+            self.open_file(path);
+        } else {
+            self.settings.recent_files.retain(|p| p != path_str);
+            self.settings.save();
+            self.status_message = tr_args("gui.recent_file_missing", &[("path", path_str)]);
         }
     }
 
@@ -1176,6 +1212,45 @@ mod tests {
         assert_eq!(app.original_text, on_disk);
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // 注意: add_recent_file / open_recent は Settings::save() を呼び、実際の
+    // %APPDATA%/DriftPatch/settings.json（ユーザーの実設定ファイル）に書き込む。
+    // そのため純粋ロジックである push_recent_file のみを直接テストし、
+    // save() を伴う経路は自動テストの対象にしない。
+
+    #[test]
+    fn test_push_recent_file_moves_duplicate_to_front() {
+        let mut recent = vec!["b.txt".to_string(), "a.txt".to_string()];
+        push_recent_file(&mut recent, "a.txt");
+        assert_eq!(recent, vec!["a.txt", "b.txt"]);
+    }
+
+    #[test]
+    fn test_push_recent_file_truncates_to_max() {
+        let mut recent = Vec::new();
+        for i in 0..MAX_RECENT_FILES {
+            push_recent_file(&mut recent, format!("{}.txt", i));
+        }
+        assert_eq!(recent.len(), MAX_RECENT_FILES);
+
+        push_recent_file(&mut recent, "new.txt");
+        assert_eq!(recent.len(), MAX_RECENT_FILES);
+        assert_eq!(recent[0], "new.txt");
+        // 最も古いエントリ（0.txt）が押し出されること
+        assert!(!recent.contains(&"0.txt".to_string()));
+    }
+
+    #[test]
+    fn test_settings_deserializes_without_recent_files_field() {
+        // recent_files フィールドの無い旧 settings.json でも読めること（後方互換）
+        let json = r#"{
+            "patch_repo_path": "",
+            "username": "",
+            "work_dir": ""
+        }"#;
+        let settings: Settings = serde_json::from_str(json).unwrap();
+        assert!(settings.recent_files.is_empty());
     }
 
     #[test]

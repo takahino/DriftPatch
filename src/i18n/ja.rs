@@ -447,4 +447,13 @@ pub static CATALOG: &[(&str, &str)] = &[
         "custom_profile.parse_error",
         "profiles.json の解析に失敗しました: {path}: {err}",
     ),
+    // --- D&D / 最近使ったファイル ---
+    ("gui.btn_recent", "🕘 最近使ったファイル"),
+    ("gui.recent_empty", "（履歴はありません）"),
+    ("gui.recent_clear", "履歴をクリア"),
+    (
+        "gui.recent_file_missing",
+        "ファイルが見つかりません（履歴から削除しました）: {path}",
+    ),
+    ("gui.drop_to_open", "ドロップして開く"),
 ];

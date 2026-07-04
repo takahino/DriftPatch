@@ -17,6 +17,39 @@ pub fn render_toolbar(app: &mut DriftPatchApp, ctx: &Context, ui: &mut egui::Ui)
             }
         }
 
+        // 最近使ったファイル
+        let recent_files = app.settings.recent_files.clone();
+        ui.menu_button(tr("gui.btn_recent"), |ui| {
+            if recent_files.is_empty() {
+                ui.label(tr("gui.recent_empty"));
+            } else {
+                let mut clicked_path: Option<String> = None;
+                for path_str in &recent_files {
+                    let filename = std::path::Path::new(path_str)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(path_str.as_str());
+                    let parent = std::path::Path::new(path_str)
+                        .parent()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default();
+                    if ui.button(format!("{}  ({})", filename, parent)).clicked() {
+                        clicked_path = Some(path_str.clone());
+                    }
+                }
+                if let Some(path) = clicked_path {
+                    app.open_recent(&path);
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button(tr("gui.recent_clear")).clicked() {
+                    app.settings.recent_files.clear();
+                    app.settings.save();
+                    ui.close();
+                }
+            }
+        });
+
         ui.separator();
 
         // Git コミットからパッチ生成

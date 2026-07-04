@@ -128,6 +128,10 @@ Press **Ctrl+F** (⌘F on macOS) while the center column has focus to open the s
 
 The "Aa" checkbox toggles case sensitivity (case-insensitive matching is ASCII-only).
 
+### Opening files: drag & drop and recent files
+
+Drag a file from Explorer/Finder onto the DriftPatch window to open it (a "Drop to open" overlay appears while dragging). The **Recent files** menu in the toolbar lists up to 10 most recently opened files (most recent first); click an entry to reopen it, or **Clear history** to empty the list. If a recent file no longer exists on disk, opening it removes it from the history and shows an error instead.
+
 ## Batch CLI Usage
 
 `driftpatch-batch` applies every `.dpatch` file under `--patch-dir` to files in `--workdir`.
