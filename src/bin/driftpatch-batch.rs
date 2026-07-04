@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use driftpatch::batch::{apply_all, import_from_commit, BatchApplyConfig, FromCommitConfig};
+use driftpatch::batch::{
+    apply_all, check_patches, import_from_commit, BatchApplyConfig, FromCommitConfig,
+    PatchCheckConfig,
+};
 
 #[derive(Parser)]
 #[command(name = "driftpatch-batch")]
@@ -51,6 +54,12 @@ enum Commands {
         /// レポート出力先ディレクトリ（任意）
         #[arg(long)]
         report_dir: Option<PathBuf>,
+    },
+    /// patch-dir 内のパッチ同士の両立性を適用せずに検査する
+    Check {
+        /// パッチが格納されたディレクトリ（patches/ または repo ルート）
+        #[arg(long)]
+        patch_dir: PathBuf,
     },
 }
 
@@ -131,6 +140,41 @@ fn main() {
                     }
 
                     if outcome.failed > 0 || outcome.skipped > 0 {
+                        std::process::exit(1);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("エラー: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Check { patch_dir } => {
+            let config = PatchCheckConfig { patch_dir };
+
+            match check_patches(&config) {
+                Ok(outcome) => {
+                    let errors: Vec<_> = outcome.errors().collect();
+                    let warnings: Vec<_> = outcome.warnings().collect();
+
+                    if errors.is_empty() && warnings.is_empty() {
+                        println!("OK: 競合は検出されませんでした ({})", outcome.patch_dir);
+                    } else {
+                        if !warnings.is_empty() {
+                            println!("警告 ({} 件):", warnings.len());
+                            for f in &warnings {
+                                println!("  - {}", f.describe());
+                            }
+                        }
+                        if !errors.is_empty() {
+                            println!("競合 ({} 件):", errors.len());
+                            for f in &errors {
+                                println!("  - {}", f.describe());
+                            }
+                        }
+                    }
+
+                    if !errors.is_empty() {
                         std::process::exit(1);
                     }
                 }

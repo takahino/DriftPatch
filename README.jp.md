@@ -140,6 +140,26 @@ driftpatch-batch apply \
 
 失敗したパッチはレポートに記録され、残りのパッチ処理は継続される。
 
+### パッチ競合の事前検査
+
+`apply --dry-run` が「指定 work_dir に当たるか」の検査なのに対し、`check` は `--patch-dir` 内のパッチ同士が両立するかを work_dir 不要で検査する。
+
+```bash
+driftpatch-batch check --patch-dir C:\project\patch-repo\patches
+```
+
+検出対象:
+
+| 検出内容 | 深刻度 | 説明 |
+|----------|--------|------|
+| 重複ハンク | 競合 (error) | 同一ファイルの同一トークン篇囲を触る2つのハンク |
+| 削除対象への編集 | 競合 (error) | Delete 対象ファイルへの Modify / Rename-with-edit |
+| リネーム旧パス宛パッチ | 警告 (warning) | Rename の `old_path` を target_file とする別パッチ（適用順序に依存） |
+
+終了コード: 競合 (error) が1件でもあれば `1`、警告のみまたは問題なければ `0`。
+
+`apply` は適用前にパッチ間の依存を解析し、`Create -> Modify -> Rename -> Delete` の基本優先度と Rename の旧パス・新パス依存で自動整列する。そのため「`Old.java` への Modify」と「`Old.java -> New.java` の Rename」が同じバッチにあっても、Modify を先に適用して失敗しない。
+
 ### Git コミットからパッチ生成
 
 ```bash

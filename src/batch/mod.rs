@@ -1,14 +1,21 @@
+mod check;
 mod from_commit;
 mod report;
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::path::PathBuf;
 
 use chrono::Local;
 
 use crate::patch::applier::ApplyError;
 use crate::patch::file_ops::{ApplyOptions, FileOpError, PatchWorkspace};
+use crate::patch::model::{PatchFile, PatchKind};
 use crate::patch::repository::PatchRepository;
 
+pub use check::{
+    check_patches, CheckSeverity, PatchCheckConfig, PatchCheckFinding, PatchCheckOutcome,
+};
 pub use from_commit::{import_from_commit, FromCommitConfig, FromCommitOutcome};
 pub use report::{write_html_report, write_xlsx_report, BatchReport, ReportRow, ReportSummary};
 
@@ -34,6 +41,10 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
     let started_at = Local::now();
     let patches = PatchRepository::list_from_dir(&config.patch_dir)
         .map_err(|e| format!("パッチ列挙エラー: {}", e))?;
+
+    // Rename 導入後に辞書順では破綻する依存（Old.java への Modify vs Old→New の Rename など）を
+    // 吸収するため、kind / created_at / Rename の依存関係に基づき適用順を整列する。
+    let patches = sort_patches_for_apply(patches);
 
     let mut rows = Vec::new();
     let mut workspace = PatchWorkspace::new(&config.work_dir);
@@ -138,23 +149,126 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
     })
 }
 
+/// kind 別の基本適用優先度。Create → Modify → Rename → Delete の順。
+fn kind_priority(kind: PatchKind) -> u8 {
+    match kind {
+        PatchKind::Create => 0,
+        PatchKind::Modify => 1,
+        PatchKind::Rename => 2,
+        PatchKind::Delete => 3,
+    }
+}
+
+/// `apply_all` 用の決定的な適用順に整列する。
+///
+/// 基本優先度は `Create -> Modify -> Rename -> Delete`。同一優先度内では
+/// `created_at` 昇順、最後に `patch_rel` で安定化する。
+///
+/// それに加え、Rename がもたらす旧パス・新パスの依存だけは明示的に扱う:
+/// - Rename `Old -> New` に対し、`Old` を target_file とする別パッチは Rename より前
+///   （Rename 後は Old が存在しないため）
+/// - Rename `Old -> New` に対し、`New` を target_file とする別パッチは Rename より後
+///   （New は Rename 後に初めて存在するため）
+///
+/// これらはトポロジカル順序として扱い、基本優先度を同順位のタイブレーカに使う。
+/// 循環が検出された場合は（真正の競合）諦めて基本優先度順に落とし、適用時に失敗させる。
+fn sort_patches_for_apply(patches: Vec<(String, PatchFile)>) -> Vec<(String, PatchFile)> {
+    let n = patches.len();
+    if n <= 1 {
+        return patches;
+    }
+
+    // タイブレーカキー: (priority, created_at, patch_rel)
+    let tiebreaker: Vec<(u8, String, String)> = patches
+        .iter()
+        .map(|(rel, p)| (kind_priority(p.kind), p.created_at.clone(), rel.clone()))
+        .collect();
+
+    // 依存エッジ: out_edges[i] = i の後に来るべきノード群
+    let mut out_edges: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut in_degree: Vec<usize> = vec![0; n];
+
+    for i in 0..n {
+        if patches[i].1.kind != PatchKind::Rename {
+            continue;
+        }
+        let old = patches[i].1.old_path.as_deref().unwrap_or("");
+        let new = patches[i].1.target_file.as_str();
+
+        for j in 0..n {
+            if i == j {
+                continue;
+            }
+            let target_j = patches[j].1.target_file.as_str();
+            if target_j == old {
+                // j (Old 宛) は i (Rename) より前
+                out_edges[j].push(i);
+                in_degree[i] += 1;
+            } else if target_j == new {
+                // i (Rename) は j (New 宛) より前
+                out_edges[i].push(j);
+                in_degree[j] += 1;
+            }
+        }
+    }
+
+    // Kahn 法 + 優先度タイブレーカ（min-heap）
+    let mut heap: BinaryHeap<Reverse<(u8, String, String, usize)>> = BinaryHeap::new();
+    for i in 0..n {
+        if in_degree[i] == 0 {
+            heap.push(Reverse((
+                tiebreaker[i].0,
+                tiebreaker[i].1.clone(),
+                tiebreaker[i].2.clone(),
+                i,
+            )));
+        }
+    }
+
+    let mut order: Vec<usize> = Vec::with_capacity(n);
+    while let Some(Reverse((_, _, _, i))) = heap.pop() {
+        order.push(i);
+        for &j in &out_edges[i] {
+            in_degree[j] -= 1;
+            if in_degree[j] == 0 {
+                heap.push(Reverse((
+                    tiebreaker[j].0,
+                    tiebreaker[j].1.clone(),
+                    tiebreaker[j].2.clone(),
+                    j,
+                )));
+            }
+        }
+    }
+
+    if order.len() != n {
+        // 循環依存（真正の競合）: 基本優先度順に落として適用時に失敗させる
+        order = (0..n).collect();
+        order.sort_by(|&a, &b| tiebreaker[a].cmp(&tiebreaker[b]));
+    }
+
+    order.into_iter().map(|i| patches[i].clone()).collect()
+}
+
 /// FileOpError をレポート用の (エラー種別, ハンク番号, メッセージ) に変換する
 fn classify_file_op_error(err: &FileOpError) -> (String, Option<usize>, String) {
     match err {
         FileOpError::Apply(e) => classify_apply_error(e),
         FileOpError::Io(msg) => ("IoError".to_string(), None, msg.clone()),
-        FileOpError::TargetNotFound { .. } => {
-            ("FileNotFound".to_string(), None, err.to_string())
-        }
+        FileOpError::TargetNotFound { .. } => ("FileNotFound".to_string(), None, err.to_string()),
         FileOpError::FileAlreadyExists(_) => {
             ("FileAlreadyExists".to_string(), None, err.to_string())
         }
-        FileOpError::DeleteVerificationFailed { .. } => {
-            ("DeleteVerificationFailed".to_string(), None, err.to_string())
-        }
-        FileOpError::RenameVerificationFailed { .. } => {
-            ("RenameVerificationFailed".to_string(), None, err.to_string())
-        }
+        FileOpError::DeleteVerificationFailed { .. } => (
+            "DeleteVerificationFailed".to_string(),
+            None,
+            err.to_string(),
+        ),
+        FileOpError::RenameVerificationFailed { .. } => (
+            "RenameVerificationFailed".to_string(),
+            None,
+            err.to_string(),
+        ),
         FileOpError::InvalidPatch(_) => ("InvalidPatch".to_string(), None, err.to_string()),
     }
 }
@@ -196,6 +310,7 @@ mod tests {
     use crate::lexer::profiles::JAVA;
     use crate::patch::context::ContextConfig;
     use crate::patch::generator::generate_patch;
+    use crate::patch::model::PatchFile;
     use crate::patch::repository::PatchRepository;
 
     #[test]
@@ -260,7 +375,11 @@ mod tests {
 
         std::fs::write(src.join("Keep.java"), "class Keep {\n    void a() {}\n}\n").unwrap();
         std::fs::write(src.join("Legacy.java"), "class Legacy {}\n").unwrap();
-        std::fs::write(src.join("OldName.java"), "class OldName {\n    void x() {}\n}\n").unwrap();
+        std::fs::write(
+            src.join("OldName.java"),
+            "class OldName {\n    void x() {}\n}\n",
+        )
+        .unwrap();
 
         let commit_all = |message: &str| {
             let mut index = repo.index().unwrap();
@@ -305,7 +424,11 @@ mod tests {
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("Keep.java"), "class Keep {\n    void a() {}\n}\n").unwrap();
         std::fs::write(src.join("Legacy.java"), "class Legacy {}\n").unwrap();
-        std::fs::write(src.join("OldName.java"), "class OldName {\n    void x() {}\n}\n").unwrap();
+        std::fs::write(
+            src.join("OldName.java"),
+            "class OldName {\n    void x() {}\n}\n",
+        )
+        .unwrap();
         work_dir
     }
 
@@ -433,5 +556,189 @@ mod tests {
         assert!(!src.join("NewName.java").exists());
 
         let _ = std::fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_sort_puts_modify_on_old_path_before_rename() {
+        // 辞書順では NewName.java/ 配下の Rename が Old.java/ 配下の Modify より
+        // 先に来てしまう構成。整列後は Modify(Old) -> Rename(Old->New) になること。
+        let orig = "class Old {\n    void a() {}\n}\n";
+        let edit = "class Old {\n    void a() { System.out.println(1); }\n}\n";
+
+        let modify = generate_patch(
+            orig,
+            edit,
+            &JAVA,
+            "tester",
+            "mod old",
+            "Old.java",
+            "UTF-8",
+            &ContextConfig::default(),
+        )
+        .unwrap();
+        let rename = pure_rename_patch_helper("Old.java", "NewName.java", edit);
+
+        // list_from_dir と同じ (rel, patch) 形式で意図的に辞書順逆に並べる
+        let input = vec![
+            ("NewName.java/ren.dpatch".to_string(), rename),
+            ("Old.java/mod.dpatch".to_string(), modify),
+        ];
+
+        let sorted = sort_patches_for_apply(input);
+        assert_eq!(
+            sorted[0].1.kind,
+            PatchKind::Modify,
+            "Modify(Old) が先になること"
+        );
+        assert_eq!(sorted[1].1.kind, PatchKind::Rename);
+    }
+
+    #[test]
+    fn test_sort_puts_modify_on_new_path_after_rename() {
+        // Rename(Old->New) + Modify(New): Modify は New が存在しないと失敗するため
+        // Rename の後に来る必要がある。基本優先度だけでは Modify が先になってしまうが、
+        // 依存エッジで Rename 先に来ること。
+        let content = "class X {}\n";
+        let rename = pure_rename_patch_helper("Old.java", "New.java", content);
+        let modify = generate_patch(
+            content,
+            "class X { void y() {} }\n",
+            &JAVA,
+            "tester",
+            "mod new",
+            "New.java",
+            "UTF-8",
+            &ContextConfig::default(),
+        )
+        .unwrap();
+
+        let input = vec![
+            ("New.java/mod.dpatch".to_string(), modify),
+            ("Old.java/ren.dpatch".to_string(), rename),
+        ];
+
+        let sorted = sort_patches_for_apply(input);
+        assert_eq!(sorted[0].1.kind, PatchKind::Rename, "Rename が先になること");
+        assert_eq!(sorted[1].1.kind, PatchKind::Modify);
+    }
+
+    #[test]
+    fn test_sort_keeps_created_at_order_for_same_file_modifies() {
+        let orig = "void foo() {\n    return null;\n}\nvoid bar() {\n    return 1;\n}\n";
+        let step1 = "void foo() {\n    return 0;\n}\nvoid bar() {\n    return 1;\n}\n";
+        let step2 = "void foo() {\n    return 0;\n}\nvoid bar() {\n    return 2;\n}\n";
+
+        let mut p1 = generate_patch(
+            orig,
+            step1,
+            &JAVA,
+            "tester",
+            "s1",
+            "Seq.java",
+            "UTF-8",
+            &ContextConfig::default(),
+        )
+        .unwrap();
+        p1.created_at = "2026-07-04T10:00:00+0900".to_string();
+        let mut p2 = generate_patch(
+            step1,
+            step2,
+            &JAVA,
+            "tester",
+            "s2",
+            "Seq.java",
+            "UTF-8",
+            &ContextConfig::default(),
+        )
+        .unwrap();
+        p2.created_at = "2026-07-04T11:00:00+0900".to_string();
+
+        // ファイル名順では逆に並べておく
+        let input = vec![
+            ("Seq.java/z-late.dpatch".to_string(), p2.clone()),
+            ("Seq.java/a-early.dpatch".to_string(), p1.clone()),
+        ];
+
+        let sorted = sort_patches_for_apply(input);
+        assert_eq!(sorted[0].1.id, p1.id, "created_at 早い方が先");
+        assert_eq!(sorted[1].1.id, p2.id);
+    }
+
+    #[test]
+    fn test_apply_all_succeeds_with_modify_old_then_rename() {
+        // Rename パッチは新パス (NewName.java) 配下に保存されるため辞書順では
+        // Rename が先に来て Modify(Old.java) が TargetNotFound になる構成。
+        // 整列によって両方成功することを apply_all で確認する。
+        let tmp =
+            std::env::temp_dir().join(format!("driftpatch_order_e2e_{}", uuid::Uuid::new_v4()));
+        let work_dir = tmp.join("work");
+        let patch_repo = tmp.join("repo");
+        let report_dir = tmp.join("reports");
+        let src = work_dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+
+        let orig = "class Old {\n    void a() {}\n}\n";
+        let edited = "class Old {\n    void a() { System.out.println(1); }\n}\n";
+        std::fs::write(src.join("Old.java"), orig).unwrap();
+
+        let modify = generate_patch(
+            orig,
+            edited,
+            &JAVA,
+            "tester",
+            "mod old",
+            "src/Old.java",
+            "UTF-8",
+            &ContextConfig::default(),
+        )
+        .unwrap();
+        let rename = pure_rename_patch_helper("src/Old.java", "src/NewName.java", edited);
+
+        let repo = PatchRepository::new(&patch_repo);
+        repo.save(&modify, "mod.dpatch").unwrap();
+        repo.save(&rename, "ren.dpatch").unwrap();
+
+        let outcome = apply_all(&BatchApplyConfig {
+            work_dir: work_dir.clone(),
+            patch_dir: repo.patches_dir(),
+            report_dir,
+            dry_run: false,
+        })
+        .unwrap();
+
+        assert_eq!(
+            outcome.report.summary.failed, 0,
+            "rows: {:?}",
+            outcome.report.rows
+        );
+        assert!(!src.join("Old.java").exists(), "Rename 元が消えること");
+        let new_text = std::fs::read_to_string(src.join("NewName.java")).unwrap();
+        assert!(
+            new_text.contains("System.out.println"),
+            "Modify -> Rename の順で編集が反映されていること: {}",
+            new_text
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// テスト内で純リネームパッチを組み立てるヘルパ
+    fn pure_rename_patch_helper(old: &str, new: &str, content: &str) -> PatchFile {
+        use crate::patch::model::PATCH_FORMAT_VERSION;
+        use crate::patch::verify::significant_token_texts;
+        PatchFile {
+            version: PATCH_FORMAT_VERSION.to_string(),
+            id: "20260704-rename-test0000".to_string(),
+            author: "tester".to_string(),
+            created_at: "2026-07-04T09:00:00+0900".to_string(),
+            description: "rename".to_string(),
+            target_file: new.to_string(),
+            language: "java".to_string(),
+            encoding: "UTF-8".to_string(),
+            kind: PatchKind::Rename,
+            old_path: Some(old.to_string()),
+            verify_tokens: Some(significant_token_texts(content, &JAVA)),
+            hunks: vec![],
+        }
     }
 }

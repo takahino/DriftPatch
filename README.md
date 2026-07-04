@@ -140,6 +140,26 @@ Each row records patch path, target file, status (`success` / `failed`), error k
 
 Failed patches are logged in the report; processing continues for remaining patches.
 
+### Pre-apply conflict check
+
+While `apply --dry-run` checks whether patches apply to a given `work_dir`, `check` inspects whether patches are mutually consistent without touching any working directory.
+
+```bash
+driftpatch-batch check --patch-dir C:\project\patch-repo\patches
+```
+
+Detected issues:
+
+| Issue | Severity | Description |
+|-------|----------|-------------|
+| Overlapping hunk | error | Two hunks touch the same token range on the same file |
+| Edit of deleted file | error | Modify / Rename-with-edit targeting a file that a Delete removes |
+| Patch targets rename old path | warning | A patch whose `target_file` equals a Rename's `old_path` (order-dependent) |
+
+Exit code: `1` if any error is found, `0` otherwise.
+
+`apply` analyzes inter-patch dependencies before applying and automatically orders them by base priority `Create -> Modify -> Rename -> Delete`, plus Rename old/new path dependencies. This keeps a batch containing both a Modify on `Old.java` and a Rename `Old.java -> New.java` safe by applying the Modify first.
+
 ### Generate patches from a Git commit
 
 ```bash
