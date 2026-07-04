@@ -1,13 +1,18 @@
 use std::path::{Path, PathBuf};
 
-use driftpatch::encoding::{read_file_auto, write_file_auto};
+use driftpatch::encoding::read_file_auto;
 use driftpatch::git_import::{generate_patches_from_commit, list_commits, CommitInfo};
 use driftpatch::lexer::profiles::detect_profile;
 use driftpatch::patch::context::ContextConfig;
-use driftpatch::patch::model::PatchFile;
+use driftpatch::patch::file_ops::backup_path;
+use driftpatch::patch::model::{PatchFile, PatchKind};
 use driftpatch::patch::name_gen::generate_filename;
 use driftpatch::patch::repository::PatchRepository;
-use driftpatch::patch::{apply_patch, generate_patch, ApplyError, GeneratorError};
+use driftpatch::patch::verify::verify_significant_tokens;
+use driftpatch::patch::{
+    apply_patch, generate_patch, ApplyError, ApplyOptions, GeneratorError, PatchWorkspace,
+    PlannedAction,
+};
 
 /// 永続化する設定
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -201,7 +206,12 @@ impl DriftPatchApp {
         };
         self.patches
             .iter()
-            .filter(|(_, patch)| patch.target_file == *rel)
+            .filter(|(_, patch)| {
+                patch.target_file == *rel
+                    // リネームパッチは移動元ファイルを開いている場合にも表示する
+                    || (patch.kind == PatchKind::Rename
+                        && patch.old_path.as_deref() == Some(rel.as_str()))
+            })
             .cloned()
             .collect()
     }
@@ -306,13 +316,82 @@ impl DriftPatchApp {
             return;
         };
 
-        if self.resolve_target_file(&patch).ok().as_ref() != Some(file_path) {
+        // リネームパッチは移動元ファイルを開いている場合に有効（target_file は新パス）
+        let applies_to_open_file = if patch.kind == PatchKind::Rename {
+            let rel = self.open_file_relative();
+            rel.as_deref() == patch.old_path.as_deref()
+        } else {
+            self.resolve_target_file(&patch).ok().as_ref() == Some(file_path)
+        };
+        if !applies_to_open_file {
             self.preview_text = String::new();
             self.status_message = "選択したパッチは現在開いているファイル向けではありません".to_string();
             return;
         }
 
         let profile = detect_profile(file_path);
+
+        match patch.kind {
+            PatchKind::Delete => {
+                // 削除パッチにプレビューはない。内容検証の結果だけ伝える
+                self.preview_text = String::new();
+                self.status_message = match patch.verify_tokens.as_deref() {
+                    Some(expected) => {
+                        match verify_significant_tokens(&self.original_text, profile, expected) {
+                            Ok(()) => "削除パッチ: 適用するとこのファイルは削除されます（内容検証 OK）"
+                                .to_string(),
+                            Err(m) => format!(
+                                "削除パッチ: 内容がパッチ記録時と一致しません（ドリフト検出）: {}",
+                                m
+                            ),
+                        }
+                    }
+                    None => "削除パッチ: verify_tokens がありません（不正なパッチ）".to_string(),
+                };
+                return;
+            }
+            PatchKind::Create => {
+                // Create は空文字列への適用で作成される全文をプレビューする
+                match apply_patch("", &patch, profile) {
+                    Ok(text) => {
+                        self.preview_text = text;
+                        self.status_message = format!(
+                            "新規作成パッチ: 適用すると {} が作成されます",
+                            patch.target_file
+                        );
+                    }
+                    Err(e) => {
+                        self.preview_text = String::new();
+                        self.status_message = format!("プレビュー失敗: {}", e);
+                    }
+                }
+                return;
+            }
+            PatchKind::Rename => {
+                // 移動後の内容（純リネームなら現内容そのまま）をプレビューする
+                let preview = if patch.hunks.is_empty() {
+                    Ok(self.original_text.clone())
+                } else {
+                    apply_patch(&self.original_text, &patch, profile)
+                };
+                match preview {
+                    Ok(text) => {
+                        self.preview_text = text;
+                        self.status_message = format!(
+                            "リネームパッチ: {} → {}",
+                            patch.old_path.as_deref().unwrap_or("?"),
+                            patch.target_file
+                        );
+                    }
+                    Err(e) => {
+                        self.preview_text = String::new();
+                        self.status_message = format!("プレビュー失敗: {}", e);
+                    }
+                }
+                return;
+            }
+            PatchKind::Modify => {}
+        }
 
         match apply_patch(&self.original_text, &patch, profile) {
             Ok(result) => {
@@ -346,7 +425,8 @@ impl DriftPatchApp {
         }
     }
 
-    /// 選択中のパッチを元テキストに適用して original_text と edited_text を更新する
+    /// 選択中のパッチをファイルに適用し、エディタ状態を更新する。
+    /// kind に応じて変更・作成・削除・リネームのファイル操作を行う（.bak 作成含む）。
     pub fn apply_selected_patch(&mut self) {
         let Some(ref patch_path) = self.selected_patch.clone() else {
             return;
@@ -358,37 +438,83 @@ impl DriftPatchApp {
         let Some(ref file_path) = self.file_path.clone() else {
             return;
         };
-        let profile = detect_profile(file_path);
 
-        match apply_patch(&self.original_text, &patch, profile) {
-            Ok(result) => {
-                let bak_path = if self.settings.create_backup {
-                    let bak = backup_path(file_path);
-                    if let Err(e) = std::fs::copy(file_path, &bak) {
-                        self.status_message =
-                            format!("パッチ適用エラー: バックアップ作成失敗: {}", e);
-                        return;
-                    }
-                    Some(bak)
-                } else {
-                    None
-                };
+        let opts = ApplyOptions {
+            dry_run: false,
+            create_backup: self.settings.create_backup,
+        };
 
-                if let Err(e) = write_file_auto(file_path, &result, &self.encoding) {
-                    self.status_message = format!("パッチ適用エラー: ファイル書込失敗: {}", e);
-                    return;
+        if patch.kind == PatchKind::Rename {
+            // リネームは旧・新の 2 パスが必要なため work_dir 基準で適用する
+            let work_dir = self.settings.work_dir.trim().to_string();
+            if work_dir.is_empty() {
+                self.status_message =
+                    "リネームパッチの適用には work_dir の設定が必要です".to_string();
+                return;
+            }
+            let mut ws = PatchWorkspace::new(&work_dir);
+            match ws.apply(&patch, &opts) {
+                Ok(PlannedAction::Rename { from, to }) => {
+                    // 移動先のファイルを開き直してエディタ状態を追従させる
+                    let new_abs = std::path::Path::new(&work_dir)
+                        .join(to.replace('/', std::path::MAIN_SEPARATOR_STR));
+                    self.open_file(new_abs);
+                    self.status_message = format!("リネーム適用完了: {} → {}", from, to);
                 }
+                Ok(action) => {
+                    self.status_message =
+                        format!("リネームパッチ: {}", action.describe(false));
+                }
+                Err(e) => {
+                    self.status_message = format!("パッチ適用エラー: {}", e);
+                }
+            }
+            return;
+        }
+
+        // Modify / Create / Delete は開いているファイルに対して直接適用する
+        let mut ws = PatchWorkspace::new(
+            file_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(".")),
+        );
+        match ws.apply_at(Some(file_path), &patch, &opts) {
+            Ok(PlannedAction::Modify) => {
+                let result = ws
+                    .cached_text_at(file_path)
+                    .unwrap_or_default()
+                    .to_string();
                 self.original_text = result.clone();
                 self.edited_text = result;
                 self.preview_text = String::new();
-                self.status_message = match bak_path {
-                    Some(bak) => format!(
+                self.status_message = if self.settings.create_backup {
+                    format!(
                         "パッチ適用完了: {} に保存、バックアップ: {}",
                         file_path.display(),
-                        bak.display()
-                    ),
-                    None => format!("パッチ適用完了: {} に保存", file_path.display()),
+                        backup_path(file_path).display()
+                    )
+                } else {
+                    format!("パッチ適用完了: {} に保存", file_path.display())
                 };
+            }
+            Ok(PlannedAction::Delete) => {
+                // 対象ファイルが消えたためエディタを閉じる
+                self.file_path = None;
+                self.original_text = String::new();
+                self.edited_text = String::new();
+                self.preview_text = String::new();
+                self.status_message = if self.settings.create_backup {
+                    format!(
+                        "削除パッチ適用完了: {} を削除、バックアップ: {}",
+                        file_path.display(),
+                        backup_path(file_path).display()
+                    )
+                } else {
+                    format!("削除パッチ適用完了: {} を削除", file_path.display())
+                };
+            }
+            Ok(action) => {
+                self.status_message = format!("パッチ適用: {}", action.describe(false));
             }
             Err(e) => {
                 self.status_message = format!("パッチ適用エラー: {}", e);
@@ -561,16 +687,6 @@ impl DriftPatchApp {
     }
 }
 
-/// 適用前のバックアップファイルパスを返す（Foo.java -> Foo.java.bak）
-fn backup_path(file_path: &std::path::Path) -> std::path::PathBuf {
-    let mut name = file_path
-        .file_name()
-        .map(std::ffi::OsString::from)
-        .unwrap_or_default();
-    name.push(".bak");
-    file_path.with_file_name(name)
-}
-
 impl eframe::App for DriftPatchApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         crate::ui::render(self, ui);
@@ -591,8 +707,122 @@ mod tests {
             target_file: target_file.to_string(),
             language: "java".to_string(),
             encoding: "UTF-8".to_string(),
+            kind: driftpatch::patch::model::PatchKind::Modify,
+            old_path: None,
+            verify_tokens: None,
             hunks: vec![],
         }
+    }
+
+    #[test]
+    fn test_patches_for_open_file_includes_rename_old_path() {
+        let mut app = DriftPatchApp::default();
+        app.settings.work_dir = std::env::temp_dir().to_string_lossy().into_owned();
+        app.file_path = Some(std::path::Path::new(&app.settings.work_dir).join("src/Old.java"));
+
+        let mut rename_patch = dummy_patch("src/New.java");
+        rename_patch.kind = PatchKind::Rename;
+        rename_patch.old_path = Some("src/Old.java".to_string());
+        rename_patch.verify_tokens = Some(vec![]);
+
+        app.patches = vec![
+            ("src/New.java/r.dpatch".to_string(), rename_patch),
+            (
+                "src/Other.java/o.dpatch".to_string(),
+                dummy_patch("src/Other.java"),
+            ),
+        ];
+
+        // 移動元ファイルを開いているとき、リネームパッチが一覧に出ること
+        let filtered = app.patches_for_open_file();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, "src/New.java/r.dpatch");
+    }
+
+    #[test]
+    fn test_apply_selected_delete_patch_creates_bak_and_removes_file() {
+        use driftpatch::lexer::profiles::JAVA;
+        use driftpatch::patch::verify::significant_token_texts;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "driftpatch_gui_del_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let content = "class Doomed {\n    void a() {}\n}\n";
+        let target = tmp.join("Doomed.java");
+        std::fs::write(&target, content).unwrap();
+
+        let mut patch = dummy_patch("Doomed.java");
+        patch.kind = PatchKind::Delete;
+        patch.verify_tokens = Some(significant_token_texts(content, &JAVA));
+
+        let mut app = DriftPatchApp::default();
+        app.file_path = Some(target.clone());
+        app.original_text = content.to_string();
+        app.edited_text = content.to_string();
+        app.encoding = "UTF-8".to_string();
+        app.patches = vec![("Doomed.java/d.dpatch".to_string(), patch)];
+        app.selected_patch = Some("Doomed.java/d.dpatch".to_string());
+
+        app.apply_selected_patch();
+
+        assert!(
+            app.status_message.contains("削除パッチ適用完了"),
+            "ステータス: {}",
+            app.status_message
+        );
+
+        // ファイルが削除され、.bak に元内容が残ること
+        assert!(!target.exists(), "対象ファイルが削除されること");
+        let bak = target.with_file_name("Doomed.java.bak");
+        assert_eq!(std::fs::read_to_string(&bak).unwrap(), content);
+
+        // エディタ状態がクリアされること
+        assert!(app.file_path.is_none());
+        assert!(app.original_text.is_empty());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_apply_selected_delete_patch_blocks_on_drift() {
+        use driftpatch::lexer::profiles::JAVA;
+        use driftpatch::patch::verify::significant_token_texts;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "driftpatch_gui_drift_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // パッチ記録時と異なる内容のファイル（ドリフト状態）
+        let on_disk = "class Drifted { void extra() {} }\n";
+        let target = tmp.join("Drifted.java");
+        std::fs::write(&target, on_disk).unwrap();
+
+        let mut patch = dummy_patch("Drifted.java");
+        patch.kind = PatchKind::Delete;
+        patch.verify_tokens = Some(significant_token_texts("class Drifted {}\n", &JAVA));
+
+        let mut app = DriftPatchApp::default();
+        app.file_path = Some(target.clone());
+        app.original_text = on_disk.to_string();
+        app.edited_text = on_disk.to_string();
+        app.patches = vec![("Drifted.java/d.dpatch".to_string(), patch)];
+        app.selected_patch = Some("Drifted.java/d.dpatch".to_string());
+
+        app.apply_selected_patch();
+
+        assert!(
+            app.status_message.contains("パッチ適用エラー"),
+            "ステータス: {}",
+            app.status_message
+        );
+        assert!(target.exists(), "ドリフト検出時はファイルが残ること");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

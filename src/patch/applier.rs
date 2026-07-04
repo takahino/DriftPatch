@@ -243,7 +243,7 @@ mod tests {
     fn test_apply_patch_multiple_matches() {
         use crate::lexer::token::TokenKind;
         use crate::lexer::Token;
-        use crate::patch::model::{DiffHunk, PatchFile};
+        use crate::patch::model::{DiffHunk, PatchFile, PatchKind};
 
         fn tok(text: &str) -> Token {
             Token::new(TokenKind::Code, text)
@@ -259,6 +259,9 @@ mod tests {
             target_file: "Foo.java".to_string(),
             language: "java".to_string(),
             encoding: "UTF-8".to_string(),
+            kind: PatchKind::Modify,
+            old_path: None,
+            verify_tokens: None,
             hunks: vec![DiffHunk {
                 context_before: vec![tok("{")],
                 removed: vec![tok("return"), tok("null")],
@@ -279,7 +282,7 @@ mod tests {
     fn test_apply_patch_count_mismatch() {
         use crate::lexer::token::TokenKind;
         use crate::lexer::Token;
-        use crate::patch::model::{DiffHunk, PatchFile};
+        use crate::patch::model::{DiffHunk, PatchFile, PatchKind};
 
         fn tok(text: &str) -> Token {
             Token::new(TokenKind::Code, text)
@@ -295,6 +298,9 @@ mod tests {
             target_file: "Foo.java".to_string(),
             language: "java".to_string(),
             encoding: "UTF-8".to_string(),
+            kind: PatchKind::Modify,
+            old_path: None,
+            verify_tokens: None,
             hunks: vec![DiffHunk {
                 context_before: vec![tok("{")],
                 removed: vec![tok("return"), tok("null")],

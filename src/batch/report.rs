@@ -17,6 +17,8 @@ pub struct ReportRow {
     pub status: String,
     pub error_kind: Option<String>,
     pub hunk_index: Option<usize>,
+    /// 実行した（dry-run では予定の）操作: modify / create / delete / rename など
+    pub action: Option<String>,
     pub message: String,
     pub started_at: String,
     pub finished_at: String,
@@ -28,6 +30,8 @@ pub struct BatchReport {
     pub patch_dir: String,
     pub started_at: String,
     pub finished_at: String,
+    /// true なら dry-run（ファイルは一切変更されていない）
+    pub dry_run: bool,
     pub summary: ReportSummary,
     pub rows: Vec<ReportRow>,
 }
@@ -41,11 +45,28 @@ pub fn write_xlsx_report(report: &BatchReport, path: &Path) -> Result<(), String
         .map_err(|e| e.to_string())?;
 
     let header = Format::new().set_bold();
+
+    // dry-run 時は先頭にバナー行を入れてデータ行を 1 行下げる
+    let data_start: u32 = if report.dry_run {
+        worksheet
+            .write_string_with_format(
+                0,
+                0,
+                "DRY-RUN（ファイルは変更されていません）",
+                &header,
+            )
+            .map_err(|e| e.to_string())?;
+        1
+    } else {
+        0
+    };
+
     let headers = [
         "パッチパス",
         "パッチID",
         "対象ファイル",
         "ステータス",
+        "操作",
         "エラー種別",
         "ハンク番号",
         "メッセージ",
@@ -55,12 +76,12 @@ pub fn write_xlsx_report(report: &BatchReport, path: &Path) -> Result<(), String
 
     for (col, title) in headers.iter().enumerate() {
         worksheet
-            .write_string_with_format(0, col as u16, *title, &header)
+            .write_string_with_format(data_start, col as u16, *title, &header)
             .map_err(|e| e.to_string())?;
     }
 
     for (row_idx, row) in report.rows.iter().enumerate() {
-        let r = (row_idx + 1) as u32;
+        let r = data_start + (row_idx + 1) as u32;
         worksheet
             .write_string(r, 0, &row.patch_path)
             .map_err(|e| e.to_string())?;
@@ -74,27 +95,30 @@ pub fn write_xlsx_report(report: &BatchReport, path: &Path) -> Result<(), String
             .write_string(r, 3, &row.status)
             .map_err(|e| e.to_string())?;
         worksheet
-            .write_string(r, 4, row.error_kind.as_deref().unwrap_or(""))
+            .write_string(r, 4, row.action.as_deref().unwrap_or(""))
+            .map_err(|e| e.to_string())?;
+        worksheet
+            .write_string(r, 5, row.error_kind.as_deref().unwrap_or(""))
             .map_err(|e| e.to_string())?;
         if let Some(hunk) = row.hunk_index {
             worksheet
-                .write_number(r, 5, hunk as f64)
+                .write_number(r, 6, hunk as f64)
                 .map_err(|e| e.to_string())?;
         } else {
-            worksheet.write_string(r, 5, "").map_err(|e| e.to_string())?;
+            worksheet.write_string(r, 6, "").map_err(|e| e.to_string())?;
         }
         worksheet
-            .write_string(r, 6, &row.message)
+            .write_string(r, 7, &row.message)
             .map_err(|e| e.to_string())?;
         worksheet
-            .write_string(r, 7, &row.started_at)
+            .write_string(r, 8, &row.started_at)
             .map_err(|e| e.to_string())?;
         worksheet
-            .write_string(r, 8, &row.finished_at)
+            .write_string(r, 9, &row.finished_at)
             .map_err(|e| e.to_string())?;
     }
 
-    let summary_row = (report.rows.len() + 2) as u32;
+    let summary_row = data_start + (report.rows.len() + 2) as u32;
     worksheet
         .write_string(summary_row, 0, "サマリ")
         .map_err(|e| e.to_string())?;
@@ -103,8 +127,11 @@ pub fn write_xlsx_report(report: &BatchReport, path: &Path) -> Result<(), String
             summary_row,
             1,
             &format!(
-                "total={} success={} failed={}",
-                report.summary.total, report.summary.success, report.summary.failed
+                "total={} success={} failed={}{}",
+                report.summary.total,
+                report.summary.success,
+                report.summary.failed,
+                if report.dry_run { " (dry-run)" } else { "" }
             ),
         )
         .map_err(|e| e.to_string())?;
@@ -126,8 +153,14 @@ pub fn write_html_report(report: &BatchReport, path: &Path) -> Result<(), String
     html.push_str(".success { background: #e8f5e9; }\n");
     html.push_str(".failed { background: #ffebee; }\n");
     html.push_str(".summary { margin-bottom: 16px; }\n");
+    html.push_str(".dryrun-banner { background: #fff3e0; border: 1px solid #ffb74d; padding: 12px; margin-bottom: 16px; font-weight: bold; }\n");
     html.push_str("</style>\n</head>\n<body>\n");
     html.push_str("<h1>DriftPatch パッチ適用レポート</h1>\n");
+    if report.dry_run {
+        html.push_str(
+            "<div class=\"dryrun-banner\">DRY-RUN: 適用可否の判定のみ行いました。ファイルは変更されていません。</div>\n",
+        );
+    }
     html.push_str("<div class=\"summary\">\n");
     html.push_str(&format!("<p><strong>work_dir:</strong> {}</p>\n", html_escape(&report.work_dir)));
     html.push_str(&format!("<p><strong>patch_dir:</strong> {}</p>\n", html_escape(&report.patch_dir)));
@@ -143,6 +176,7 @@ pub fn write_html_report(report: &BatchReport, path: &Path) -> Result<(), String
         "パッチID",
         "対象ファイル",
         "ステータス",
+        "操作",
         "エラー種別",
         "ハンク番号",
         "メッセージ",
@@ -164,6 +198,10 @@ pub fn write_html_report(report: &BatchReport, path: &Path) -> Result<(), String
         html.push_str(&format!("<td>{}</td>\n", html_escape(&row.patch_id)));
         html.push_str(&format!("<td>{}</td>\n", html_escape(&row.target_file)));
         html.push_str(&format!("<td>{}</td>\n", html_escape(&row.status)));
+        html.push_str(&format!(
+            "<td>{}</td>\n",
+            html_escape(row.action.as_deref().unwrap_or(""))
+        ));
         html.push_str(&format!(
             "<td>{}</td>\n",
             html_escape(row.error_kind.as_deref().unwrap_or(""))
@@ -202,6 +240,7 @@ mod report_tests {
             patch_dir: "C:/patches".to_string(),
             started_at: "2026-06-28 10:00:00".to_string(),
             finished_at: "2026-06-28 10:00:01".to_string(),
+            dry_run: false,
             summary: ReportSummary {
                 total: 2,
                 success: 1,
@@ -215,6 +254,7 @@ mod report_tests {
                     status: "success".to_string(),
                     error_kind: None,
                     hunk_index: None,
+                    action: Some("modify".to_string()),
                     message: "適用成功".to_string(),
                     started_at: "2026-06-28 10:00:00".to_string(),
                     finished_at: "2026-06-28 10:00:00".to_string(),
@@ -226,6 +266,7 @@ mod report_tests {
                     status: "failed".to_string(),
                     error_kind: Some("NoMatch".to_string()),
                     hunk_index: Some(0),
+                    action: Some("modify".to_string()),
                     message: "not found".to_string(),
                     started_at: "2026-06-28 10:00:01".to_string(),
                     finished_at: "2026-06-28 10:00:01".to_string(),
@@ -250,6 +291,23 @@ mod report_tests {
         let html_text = std::fs::read_to_string(&html).unwrap();
         assert!(html_text.contains("src/Foo.java/a.dpatch"));
         assert!(html_text.contains("failed"));
+        assert!(html_text.contains("<th>操作</th>"));
+        assert!(!html_text.contains("DRY-RUN"), "非 dry-run ではバナーを出さない");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_write_html_report_dry_run_banner() {
+        let tmp = std::env::temp_dir().join(format!("driftpatch_report_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut report = sample_report();
+        report.dry_run = true;
+        let html = tmp.join("dryrun.html");
+
+        write_html_report(&report, &html).unwrap();
+        let html_text = std::fs::read_to_string(&html).unwrap();
+        assert!(html_text.contains("DRY-RUN"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

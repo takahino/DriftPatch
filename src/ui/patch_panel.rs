@@ -66,6 +66,7 @@ pub fn render_patch_panel(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
                 .min_col_width(80.0)
                 .show(ui, |ui| {
                     ui.strong("パッチ");
+                    ui.strong("種別");
                     ui.strong("作者");
                     ui.strong("説明");
                     ui.strong("作成日時");
@@ -82,6 +83,7 @@ pub fn render_patch_panel(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
                             new_selection = Some(patch_path.clone());
                             selection_changed = true;
                         }
+                        ui.label(patch.kind.label());
                         ui.label(patch.author.as_str());
                         ui.label(patch.description.as_str());
                         ui.label(patch.created_at.as_str());

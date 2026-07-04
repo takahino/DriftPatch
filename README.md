@@ -120,6 +120,7 @@ driftpatch-batch apply \
 | `--workdir` | Root directory containing target source files |
 | `--patch-dir` | Directory containing `.dpatch` files (typically `patches/` or the repo root) |
 | `--report-dir` | Output directory for Excel and HTML reports |
+| `--dry-run` | Report what each patch would do (modify / create / delete / rename) without changing any file |
 
 ### Reports
 
@@ -163,6 +164,8 @@ driftpatch-batch from-commit \
 | `--report-dir` | Report output directory (optional) |
 
 Multiple edits in the same file are split into separate `.dpatch` files per hunk.
+
+All change types in the commit are captured: modified files become `modify` patches, added files become `create` patches, deleted files become `delete` patches (recording the deleted content's significant tokens as `verify_tokens`), and renames are detected and become `rename` patches. On apply, a `delete`/pure-`rename` patch only removes or moves the file if its current content still matches `verify_tokens` (whitespace/indent differences are ignored) — drifted files are left untouched and reported as failures.
 
 ## Patch Repository Layout
 

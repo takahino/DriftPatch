@@ -1,13 +1,18 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::patch::model::PatchFile;
+use crate::patch::model::{PatchFile, SUPPORTED_VERSIONS};
 
 #[derive(Debug)]
 pub enum RepoError {
     Io(std::io::Error),
     Json(serde_json::Error),
     InvalidPath(String),
+    /// フォーマットバージョンが未対応（新しいバージョンのパッチを旧コードが
+    /// 「空の Modify」等と誤認して no-op 成功する事故を防ぐ）
+    UnsupportedVersion(String),
+    /// kind と付随フィールドの整合性エラー
+    InvalidPatch(String),
 }
 
 impl std::fmt::Display for RepoError {
@@ -16,6 +21,12 @@ impl std::fmt::Display for RepoError {
             RepoError::Io(e) => write!(f, "I/Oエラー: {}", e),
             RepoError::Json(e) => write!(f, "JSONエラー: {}", e),
             RepoError::InvalidPath(p) => write!(f, "パスが無効: {}", p),
+            RepoError::UnsupportedVersion(v) => write!(
+                f,
+                "未対応のパッチフォーマットバージョンです: {}（新しい DriftPatch で作成された可能性があります）",
+                v
+            ),
+            RepoError::InvalidPatch(msg) => write!(f, "パッチが不正: {}", msg),
         }
     }
 }
@@ -62,6 +73,8 @@ impl PatchRepository {
                 "target_file が空です".to_string(),
             ));
         }
+        // 不正なパッチ（例: verify_tokens のない削除パッチ）の保存を防ぐ
+        patch.validate().map_err(RepoError::InvalidPatch)?;
 
         let dir = self.target_dir(&patch.target_file);
         fs::create_dir_all(&dir)?;
@@ -117,7 +130,10 @@ impl PatchRepository {
         let content = fs::read(&path)?;
         let text = String::from_utf8(content)
             .map_err(|e| RepoError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
-        let patch = serde_json::from_str(&text)?;
+        let patch: PatchFile = serde_json::from_str(&text)?;
+        if !SUPPORTED_VERSIONS.contains(&patch.version.as_str()) {
+            return Err(RepoError::UnsupportedVersion(patch.version));
+        }
         Ok(patch)
     }
 }
@@ -153,7 +169,10 @@ fn collect_patches(
         if let Ok(content) = fs::read(&path) {
             if let Ok(text) = String::from_utf8(content) {
                 if let Ok(patch) = serde_json::from_str::<PatchFile>(&text) {
-                    out.push((relative_str, patch));
+                    // 未対応バージョンは読み飛ばす（誤って no-op 適用しないため）
+                    if SUPPORTED_VERSIONS.contains(&patch.version.as_str()) {
+                        out.push((relative_str, patch));
+                    }
                 }
             }
         }
@@ -164,7 +183,7 @@ fn collect_patches(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::patch::model::PatchFile;
+    use crate::patch::model::{PatchFile, PatchKind};
 
     fn dummy_patch(target_file: &str) -> PatchFile {
         PatchFile {
@@ -176,6 +195,9 @@ mod tests {
             target_file: target_file.to_string(),
             language: "java".to_string(),
             encoding: "UTF-8".to_string(),
+            kind: PatchKind::Modify,
+            old_path: None,
+            verify_tokens: None,
             hunks: vec![],
         }
     }
@@ -234,6 +256,45 @@ mod tests {
 
         repo.delete("src/Del.java/20260628-del.dpatch").unwrap();
         assert!(repo.list().unwrap().is_empty());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_unsupported_version_is_skipped_and_load_fails() {
+        let tmp = std::env::temp_dir().join(format!("driftpatch_test_{}", uuid::Uuid::new_v4()));
+        let patches_dir = tmp.join("patches");
+        fs::create_dir_all(&patches_dir).unwrap();
+
+        let mut patch = dummy_patch("Future.java");
+        patch.version = "99".to_string();
+        let json = serde_json::to_string_pretty(&patch).unwrap();
+        fs::write(patches_dir.join("future.dpatch"), json).unwrap();
+
+        let repo = PatchRepository::new(&tmp);
+        // 一覧では読み飛ばされること
+        assert!(repo.list().unwrap().is_empty());
+        // 直接ロードでは明示的なエラーになること
+        assert!(matches!(
+            repo.load("future.dpatch"),
+            Err(RepoError::UnsupportedVersion(_))
+        ));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_save_rejects_invalid_patch() {
+        let tmp = std::env::temp_dir().join(format!("driftpatch_test_{}", uuid::Uuid::new_v4()));
+        let repo = PatchRepository::new(&tmp);
+
+        // verify_tokens のない削除パッチは保存できないこと
+        let mut patch = dummy_patch("src/Del.java");
+        patch.kind = PatchKind::Delete;
+        assert!(matches!(
+            repo.save(&patch, "invalid.dpatch"),
+            Err(RepoError::InvalidPatch(_))
+        ));
 
         let _ = fs::remove_dir_all(&tmp);
     }

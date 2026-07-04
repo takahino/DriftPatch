@@ -24,6 +24,9 @@ enum Commands {
         /// レポート出力先ディレクトリ
         #[arg(long)]
         report_dir: PathBuf,
+        /// ファイルを変更せず、適用可否と予定操作のみレポートする
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Git コミットから .dpatch を一括生成する
     FromCommit {
@@ -59,16 +62,22 @@ fn main() {
             workdir,
             patch_dir,
             report_dir,
+            dry_run,
         } => {
             let config = BatchApplyConfig {
                 work_dir: workdir,
                 patch_dir,
                 report_dir,
+                dry_run,
             };
 
             match apply_all(&config) {
                 Ok(outcome) => {
-                    println!("一括適用完了");
+                    if dry_run {
+                        println!("dry-run 完了（ファイルは変更されていません）");
+                    } else {
+                        println!("一括適用完了");
+                    }
                     println!(
                         "  合計: {} / 成功: {} / 失敗: {}",
                         outcome.report.summary.total,

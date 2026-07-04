@@ -1,14 +1,12 @@
 mod from_commit;
 mod report;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use chrono::Local;
 
-use crate::encoding::{encode_text, read_file_auto};
-use crate::lexer::profiles::detect_profile;
-use crate::patch::applier::{apply_patch, ApplyError};
-use crate::patch::model::PatchFile;
+use crate::patch::applier::ApplyError;
+use crate::patch::file_ops::{ApplyOptions, FileOpError, PatchWorkspace};
 use crate::patch::repository::PatchRepository;
 
 pub use from_commit::{import_from_commit, FromCommitConfig, FromCommitOutcome};
@@ -19,6 +17,8 @@ pub struct BatchApplyConfig {
     pub work_dir: PathBuf,
     pub patch_dir: PathBuf,
     pub report_dir: PathBuf,
+    /// true ならファイルを一切変更せず、適用可否と予定操作のみレポートする
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -36,12 +36,14 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
         .map_err(|e| format!("パッチ列挙エラー: {}", e))?;
 
     let mut rows = Vec::new();
-    let mut file_cache: std::collections::HashMap<PathBuf, (String, String)> =
-        std::collections::HashMap::new();
+    let mut workspace = PatchWorkspace::new(&config.work_dir);
+    let opts = ApplyOptions {
+        dry_run: config.dry_run,
+        create_backup: false,
+    };
 
     for (patch_rel, patch) in patches {
         let row_started = Local::now();
-        let target_path = config.work_dir.join(&patch.target_file);
 
         if patch.target_file.is_empty() {
             rows.push(ReportRow {
@@ -51,6 +53,7 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
                 status: "failed".to_string(),
                 error_kind: Some("InvalidTarget".to_string()),
                 hunk_index: None,
+                action: None,
                 message: "target_file が空です".to_string(),
                 started_at: row_started.format("%Y-%m-%d %H:%M:%S").to_string(),
                 finished_at: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -58,26 +61,11 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
             continue;
         }
 
-        if !target_path.exists() {
-            rows.push(ReportRow {
-                patch_path: patch_rel,
-                patch_id: patch.id,
-                target_file: patch.target_file.clone(),
-                status: "failed".to_string(),
-                error_kind: Some("FileNotFound".to_string()),
-                hunk_index: None,
-                message: format!("対象ファイルが見つかりません: {}", target_path.display()),
-                started_at: row_started.format("%Y-%m-%d %H:%M:%S").to_string(),
-                finished_at: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-            });
-            continue;
-        }
-
-        let apply_result = apply_single_patch(&target_path, &patch, &mut file_cache);
+        let apply_result = workspace.apply(&patch, &opts);
 
         let finished_at = Local::now();
         match apply_result {
-            Ok(()) => {
+            Ok(action) => {
                 rows.push(ReportRow {
                     patch_path: patch_rel,
                     patch_id: patch.id,
@@ -85,26 +73,14 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
                     status: "success".to_string(),
                     error_kind: None,
                     hunk_index: None,
-                    message: "適用成功".to_string(),
+                    action: Some(action.kind_str().to_string()),
+                    message: action.describe(config.dry_run),
                     started_at: row_started.format("%Y-%m-%d %H:%M:%S").to_string(),
                     finished_at: finished_at.format("%Y-%m-%d %H:%M:%S").to_string(),
                 });
             }
-            Err(ApplyFailure::Io(message)) => {
-                rows.push(ReportRow {
-                    patch_path: patch_rel,
-                    patch_id: patch.id,
-                    target_file: patch.target_file,
-                    status: "failed".to_string(),
-                    error_kind: Some("IoError".to_string()),
-                    hunk_index: None,
-                    message,
-                    started_at: row_started.format("%Y-%m-%d %H:%M:%S").to_string(),
-                    finished_at: finished_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-                });
-            }
-            Err(ApplyFailure::Patch(e)) => {
-                let (error_kind, hunk_index, message) = classify_apply_error(&e);
+            Err(e) => {
+                let (error_kind, hunk_index, message) = classify_file_op_error(&e);
                 rows.push(ReportRow {
                     patch_path: patch_rel,
                     patch_id: patch.id,
@@ -112,6 +88,7 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
                     status: "failed".to_string(),
                     error_kind: Some(error_kind),
                     hunk_index,
+                    action: Some(patch.kind.label().to_string()),
                     message,
                     started_at: row_started.format("%Y-%m-%d %H:%M:%S").to_string(),
                     finished_at: finished_at.format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -129,6 +106,7 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
         patch_dir: config.patch_dir.display().to_string(),
         started_at: started_at.format("%Y-%m-%d %H:%M:%S").to_string(),
         finished_at: finished_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+        dry_run: config.dry_run,
         summary: ReportSummary {
             total: rows.len(),
             success: success_count,
@@ -160,44 +138,25 @@ pub fn apply_all(config: &BatchApplyConfig) -> Result<BatchApplyOutcome, String>
     })
 }
 
-enum ApplyFailure {
-    Io(String),
-    Patch(ApplyError),
-}
-
-fn apply_single_patch(
-    target_path: &Path,
-    patch: &PatchFile,
-    file_cache: &mut std::collections::HashMap<PathBuf, (String, String)>,
-) -> Result<(), ApplyFailure> {
-    let (text, encoding) = if let Some(cached) = file_cache.get(target_path) {
-        cached.clone()
-    } else {
-        let (text, enc) = read_file_auto(target_path)
-            .map_err(|e| ApplyFailure::Io(format!("ファイル読込エラー: {}", e)))?;
-        let enc = if patch.encoding.is_empty() {
-            enc
-        } else {
-            patch.encoding.clone()
-        };
-        file_cache.insert(target_path.to_path_buf(), (text.clone(), enc.clone()));
-        (text, enc)
-    };
-
-    let profile = detect_profile(target_path);
-    let result = apply_patch(&text, patch, profile).map_err(ApplyFailure::Patch)?;
-
-    let enc = if patch.encoding.is_empty() {
-        encoding
-    } else {
-        patch.encoding.clone()
-    };
-    let bytes = encode_text(&result, &enc);
-    std::fs::write(target_path, &bytes)
-        .map_err(|e| ApplyFailure::Io(format!("ファイル書込エラー: {}", e)))?;
-
-    file_cache.insert(target_path.to_path_buf(), (result, enc));
-    Ok(())
+/// FileOpError をレポート用の (エラー種別, ハンク番号, メッセージ) に変換する
+fn classify_file_op_error(err: &FileOpError) -> (String, Option<usize>, String) {
+    match err {
+        FileOpError::Apply(e) => classify_apply_error(e),
+        FileOpError::Io(msg) => ("IoError".to_string(), None, msg.clone()),
+        FileOpError::TargetNotFound { .. } => {
+            ("FileNotFound".to_string(), None, err.to_string())
+        }
+        FileOpError::FileAlreadyExists(_) => {
+            ("FileAlreadyExists".to_string(), None, err.to_string())
+        }
+        FileOpError::DeleteVerificationFailed { .. } => {
+            ("DeleteVerificationFailed".to_string(), None, err.to_string())
+        }
+        FileOpError::RenameVerificationFailed { .. } => {
+            ("RenameVerificationFailed".to_string(), None, err.to_string())
+        }
+        FileOpError::InvalidPatch(_) => ("InvalidPatch".to_string(), None, err.to_string()),
+    }
 }
 
 fn classify_apply_error(err: &ApplyError) -> (String, Option<usize>, String) {
@@ -273,6 +232,7 @@ mod tests {
             work_dir: work_dir.clone(),
             patch_dir: repo.patches_dir(),
             report_dir: report_dir.clone(),
+            dry_run: false,
         })
         .unwrap();
 
@@ -285,5 +245,193 @@ mod tests {
         assert!(applied.contains("Objects.requireNonNull"));
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 削除・新規作成・リネームを含むコミット → from-commit で生成 →
+    /// pre-commit 状態の別 work_dir へ適用、の end-to-end フロー用フィクスチャ
+    fn setup_kind_repo() -> (std::path::PathBuf, String) {
+        use git2::{IndexAddOption, Repository, Signature};
+
+        let tmp = std::env::temp_dir().join(format!("driftpatch_e2e_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let repo = Repository::init(&tmp).unwrap();
+        let src = tmp.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+
+        std::fs::write(src.join("Keep.java"), "class Keep {\n    void a() {}\n}\n").unwrap();
+        std::fs::write(src.join("Legacy.java"), "class Legacy {}\n").unwrap();
+        std::fs::write(src.join("OldName.java"), "class OldName {\n    void x() {}\n}\n").unwrap();
+
+        let commit_all = |message: &str| {
+            let mut index = repo.index().unwrap();
+            index
+                .add_all(["*"].iter(), IndexAddOption::DEFAULT, None)
+                .unwrap();
+            index.update_all(["*"].iter(), None).unwrap();
+            index.write().unwrap();
+            let tree_id = index.write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let sig = Signature::now("tester", "test@example.com").unwrap();
+            let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+            if let Some(parent) = parent {
+                repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent])
+                    .unwrap()
+            } else {
+                repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[])
+                    .unwrap()
+            }
+        };
+
+        commit_all("initial");
+
+        // 変更 + 削除 + 新規作成 + リネームを 1 コミットに含める
+        std::fs::write(
+            src.join("Keep.java"),
+            "class Keep {\n    void a() { System.out.println(1); }\n}\n",
+        )
+        .unwrap();
+        std::fs::remove_file(src.join("Legacy.java")).unwrap();
+        std::fs::write(src.join("Created.java"), "class Created {}\n").unwrap();
+        std::fs::rename(src.join("OldName.java"), src.join("NewName.java")).unwrap();
+        let oid = commit_all("mixed changes");
+
+        (tmp, oid.to_string())
+    }
+
+    /// pre-commit（initial 時点）の状態を別ディレクトリに再現する
+    fn setup_pre_commit_workdir(base: &std::path::Path) -> std::path::PathBuf {
+        let work_dir = base.join("apply-work");
+        let src = work_dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("Keep.java"), "class Keep {\n    void a() {}\n}\n").unwrap();
+        std::fs::write(src.join("Legacy.java"), "class Legacy {}\n").unwrap();
+        std::fs::write(src.join("OldName.java"), "class OldName {\n    void x() {}\n}\n").unwrap();
+        work_dir
+    }
+
+    #[test]
+    fn test_batch_apply_create_delete_rename_end_to_end() {
+        let (repo_path, commit_sha) = setup_kind_repo();
+        let patch_repo = repo_path.join("patch-repo");
+
+        let outcome = import_from_commit(&FromCommitConfig {
+            repo: repo_path.clone(),
+            commit: commit_sha,
+            work_dir: repo_path.clone(),
+            patch_repo: patch_repo.clone(),
+            author: "tester".to_string(),
+            description: Some("e2e".to_string()),
+            report_dir: None,
+        })
+        .unwrap();
+        assert_eq!(outcome.failed, 0);
+        assert_eq!(outcome.skipped, 0, "全変更がパッチ化されること");
+
+        let work_dir = setup_pre_commit_workdir(&repo_path);
+        let report_dir = repo_path.join("reports");
+
+        let apply_outcome = apply_all(&BatchApplyConfig {
+            work_dir: work_dir.clone(),
+            patch_dir: patch_repo.join("patches"),
+            report_dir,
+            dry_run: false,
+        })
+        .unwrap();
+
+        assert_eq!(
+            apply_outcome.report.summary.failed, 0,
+            "rows: {:?}",
+            apply_outcome.report.rows
+        );
+
+        // コミット後の状態が再現されること
+        let src = work_dir.join("src");
+        assert!(
+            std::fs::read_to_string(src.join("Keep.java"))
+                .unwrap()
+                .contains("System.out.println"),
+            "Modify が適用されること"
+        );
+        assert!(!src.join("Legacy.java").exists(), "Delete が適用されること");
+        assert_eq!(
+            std::fs::read_to_string(src.join("Created.java")).unwrap(),
+            "class Created {}\n",
+            "Create が適用されること"
+        );
+        assert!(!src.join("OldName.java").exists(), "Rename 元が消えること");
+        assert!(src.join("NewName.java").exists(), "Rename 先ができること");
+
+        // レポートの操作列に各種別が入ること
+        let actions: Vec<_> = apply_outcome
+            .report
+            .rows
+            .iter()
+            .filter_map(|r| r.action.clone())
+            .collect();
+        for expected in ["modify", "create", "delete", "rename"] {
+            assert!(
+                actions.iter().any(|a| a == expected),
+                "操作 {} がレポートに含まれること: {:?}",
+                expected,
+                actions
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_batch_apply_dry_run_reports_but_no_changes() {
+        let (repo_path, commit_sha) = setup_kind_repo();
+        let patch_repo = repo_path.join("patch-repo");
+
+        import_from_commit(&FromCommitConfig {
+            repo: repo_path.clone(),
+            commit: commit_sha,
+            work_dir: repo_path.clone(),
+            patch_repo: patch_repo.clone(),
+            author: "tester".to_string(),
+            description: Some("dry".to_string()),
+            report_dir: None,
+        })
+        .unwrap();
+
+        let work_dir = setup_pre_commit_workdir(&repo_path);
+        let report_dir = repo_path.join("reports");
+
+        let outcome = apply_all(&BatchApplyConfig {
+            work_dir: work_dir.clone(),
+            patch_dir: patch_repo.join("patches"),
+            report_dir,
+            dry_run: true,
+        })
+        .unwrap();
+
+        assert!(outcome.report.dry_run);
+        assert_eq!(
+            outcome.report.summary.failed, 0,
+            "rows: {:?}",
+            outcome.report.rows
+        );
+        for row in &outcome.report.rows {
+            assert!(
+                row.message.starts_with("[dry-run]"),
+                "message: {}",
+                row.message
+            );
+        }
+
+        // work_dir が完全に無変更であること
+        let src = work_dir.join("src");
+        assert_eq!(
+            std::fs::read_to_string(src.join("Keep.java")).unwrap(),
+            "class Keep {\n    void a() {}\n}\n"
+        );
+        assert!(src.join("Legacy.java").exists());
+        assert!(src.join("OldName.java").exists());
+        assert!(!src.join("Created.java").exists());
+        assert!(!src.join("NewName.java").exists());
+
+        let _ = std::fs::remove_dir_all(&repo_path);
     }
 }

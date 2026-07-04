@@ -1,7 +1,7 @@
 use crate::diff::token_diff::{diff_tokens, DiffTag, extract_significant};
 use crate::lexer::{GenericTokenizer, LanguageProfile, Token};
 use crate::patch::context::{find_patch_matches, ContextConfig, CONTEXT_STEPS};
-use crate::patch::model::{DiffHunk, PatchFile};
+use crate::patch::model::{DiffHunk, PatchFile, PatchKind, PATCH_FORMAT_VERSION};
 use crate::patch::name_gen::generate_patch_id;
 
 #[derive(Debug)]
@@ -148,7 +148,7 @@ pub fn generate_patch(
     let (id, created_at) = generate_patch_id(description);
 
     Ok(PatchFile {
-        version: "1".to_string(),
+        version: PATCH_FORMAT_VERSION.to_string(),
         id,
         author: author.to_string(),
         created_at,
@@ -156,6 +156,9 @@ pub fn generate_patch(
         target_file: target_file.to_string(),
         language: profile.name.to_string(),
         encoding: encoding.to_string(),
+        kind: PatchKind::Modify,
+        old_path: None,
+        verify_tokens: None,
         hunks,
     })
 }

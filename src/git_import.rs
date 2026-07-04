@@ -6,7 +6,9 @@ use crate::encoding::decode_bytes;
 use crate::lexer::profiles::detect_profile;
 use crate::patch::context::ContextConfig;
 use crate::patch::generator::{generate_patch, GeneratorError};
-use crate::patch::model::{DiffHunk, PatchFile};
+use crate::patch::model::{DiffHunk, PatchFile, PatchKind, PATCH_FORMAT_VERSION};
+use crate::patch::name_gen::generate_patch_id;
+use crate::patch::verify::significant_token_texts;
 
 #[derive(Debug, Clone)]
 pub struct CommitInfo {
@@ -29,6 +31,8 @@ pub enum FileChangeStatus {
 pub struct ChangedFile {
     pub path: String,
     pub status: FileChangeStatus,
+    /// Renamed のみ: リネーム前の旧パス（リポジトリルート相対・`/` 区切り）
+    pub old_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -171,90 +175,47 @@ pub fn generate_patches_from_commit(
                 return true;
             };
 
-            if changed.status == FileChangeStatus::Deleted {
-                skipped.push(SkippedEntry {
+            let result = match changed.status {
+                FileChangeStatus::Deleted => build_delete_patch(
+                    &repo,
+                    parent_tree.as_ref(),
+                    &changed.path,
+                    author,
+                    &description,
+                )
+                .map(|item| vec![item]),
+                FileChangeStatus::Renamed => match changed.old_path {
+                    Some(ref old_git_path) => build_rename_patch(
+                        &repo,
+                        parent_tree.as_ref(),
+                        &commit_tree,
+                        old_git_path,
+                        &changed.path,
+                        author,
+                        &description,
+                        config,
+                    )
+                    .map(|item| vec![item]),
+                    None => Err("リネーム元パスが取得できません".to_string()),
+                },
+                FileChangeStatus::Added | FileChangeStatus::Modified => build_content_patches(
+                    &repo,
+                    parent_tree.as_ref(),
+                    &commit_tree,
+                    &work_dir,
+                    &changed,
+                    author,
+                    &description,
+                    config,
+                ),
+            };
+
+            match result {
+                Ok(items) => generated.extend(items),
+                Err(reason) => skipped.push(SkippedEntry {
                     path: changed.path.clone(),
-                    reason: "削除されたファイルはスキップ".to_string(),
-                });
-                return true;
-            }
-
-            let git_path = changed.path.replace('\\', "/");
-            let target_file = match to_work_dir_relative(&work_dir, &git_path) {
-                Ok(p) => p,
-                Err(reason) => {
-                    skipped.push(SkippedEntry {
-                        path: git_path.clone(),
-                        reason,
-                    });
-                    return true;
-                }
-            };
-
-            let before_bytes = if let Some(ref parent) = parent_tree {
-                read_blob_from_tree(&repo, parent, &git_path).unwrap_or(None)
-            } else {
-                None
-            };
-            let after_bytes =
-                read_blob_from_tree(&repo, &commit_tree, &git_path).unwrap_or(None);
-
-            let Some(after_bytes) = after_bytes else {
-                skipped.push(SkippedEntry {
-                    path: git_path.clone(),
-                    reason: "コミット後のファイル内容が取得できません".to_string(),
-                });
-                return true;
-            };
-
-            if is_binary_content(before_bytes.as_deref())
-                || is_binary_content(Some(&after_bytes))
-            {
-                skipped.push(SkippedEntry {
-                    path: git_path.clone(),
-                    reason: "バイナリファイルはスキップ".to_string(),
-                });
-                return true;
-            }
-
-            let (before_text, _) = decode_bytes(before_bytes.as_deref().unwrap_or(&[]));
-            let (after_text, encoding) = decode_bytes(&after_bytes);
-
-            let profile = detect_profile(Path::new(&target_file));
-            match generate_patch(
-                &before_text,
-                &after_text,
-                profile,
-                author,
-                &description,
-                &target_file,
-                &encoding,
-                config,
-            ) {
-                Ok(patch) => {
-                    for item in split_patch_by_hunks(patch) {
-                        generated.push(GeneratedPatch {
-                            target_file: target_file.clone(),
-                            patch: item.patch,
-                            filename: item.filename,
-                        });
-                    }
-                }
-                Err(GeneratorError::NoDiff) => {
-                    skipped.push(SkippedEntry {
-                        path: git_path,
-                        reason: "変更が見つかりませんでした".to_string(),
-                    });
-                }
-                Err(GeneratorError::NoMatch { hunk_index }) => {
-                    skipped.push(SkippedEntry {
-                        path: git_path,
-                        reason: format!(
-                            "ハンク {} の適用箇所が見つかりませんでした",
-                            hunk_index
-                        ),
-                    });
-                }
+                    reason,
+                }),
             }
 
             true
@@ -265,6 +226,222 @@ pub fn generate_patches_from_commit(
     )?;
 
     Ok(PatchImportResult { generated, skipped })
+}
+
+/// Added / Modified の変更内容から Modify / Create パッチ（複数可）を生成する。
+fn build_content_patches(
+    repo: &Repository,
+    parent_tree: Option<&git2::Tree>,
+    commit_tree: &git2::Tree,
+    work_dir: &Path,
+    changed: &ChangedFile,
+    author: &str,
+    description: &str,
+    config: &ContextConfig,
+) -> Result<Vec<GeneratedPatch>, String> {
+    let git_path = changed.path.replace('\\', "/");
+    // 新規作成は work_dir に現物が無い（pre-commit 状態の）場合もあるため字句的に解決する
+    let target_file = if changed.status == FileChangeStatus::Added {
+        to_work_dir_relative_lenient(&git_path)?
+    } else {
+        to_work_dir_relative(work_dir, &git_path)?
+    };
+
+    let before_bytes = if let Some(parent) = parent_tree {
+        read_blob_from_tree(repo, parent, &git_path).unwrap_or(None)
+    } else {
+        None
+    };
+    let after_bytes = read_blob_from_tree(repo, commit_tree, &git_path)
+        .unwrap_or(None)
+        .ok_or_else(|| "コミット後のファイル内容が取得できません".to_string())?;
+
+    if is_binary_content(before_bytes.as_deref()) || is_binary_content(Some(&after_bytes)) {
+        return Err("バイナリファイルはスキップ".to_string());
+    }
+
+    let (before_text, _) = decode_bytes(before_bytes.as_deref().unwrap_or(&[]));
+    let (after_text, encoding) = decode_bytes(&after_bytes);
+
+    let profile = detect_profile(Path::new(&target_file));
+    let mut patch = generate_patch(
+        &before_text,
+        &after_text,
+        profile,
+        author,
+        description,
+        &target_file,
+        &encoding,
+        config,
+    )
+    .map_err(generator_error_reason)?;
+
+    if changed.status == FileChangeStatus::Added {
+        patch.kind = PatchKind::Create;
+    }
+
+    // Create はファイル全文の 1 ハンクとして扱うため分割しない（分割は Modify のみ）
+    let split = if patch.kind == PatchKind::Modify {
+        split_patch_by_hunks(patch)
+    } else {
+        let filename = format!("{}.dpatch", patch.id);
+        vec![SplitPatch { patch, filename }]
+    };
+
+    Ok(split
+        .into_iter()
+        .map(|item| GeneratedPatch {
+            target_file: target_file.clone(),
+            patch: item.patch,
+            filename: item.filename,
+        })
+        .collect())
+}
+
+/// 削除ファイルから Delete パッチを生成する。
+/// 適用時の誤削除を防ぐため、削除時点の significant token 列を verify_tokens に記録する。
+fn build_delete_patch(
+    repo: &Repository,
+    parent_tree: Option<&git2::Tree>,
+    git_path: &str,
+    author: &str,
+    description: &str,
+) -> Result<GeneratedPatch, String> {
+    let git_path = git_path.replace('\\', "/");
+    let target_file = to_work_dir_relative_lenient(&git_path)?;
+
+    let parent = parent_tree
+        .ok_or_else(|| "親コミットがないため削除前の内容を取得できません".to_string())?;
+    let before_bytes = read_blob_from_tree(repo, parent, &git_path)
+        .unwrap_or(None)
+        .ok_or_else(|| "削除前のファイル内容が取得できません".to_string())?;
+
+    if is_binary_content(Some(&before_bytes)) {
+        return Err("バイナリファイルはスキップ".to_string());
+    }
+
+    let (before_text, encoding) = decode_bytes(&before_bytes);
+    let profile = detect_profile(Path::new(&target_file));
+    let (id, created_at) = generate_patch_id(description);
+    let filename = format!("{}.dpatch", id);
+
+    let patch = PatchFile {
+        version: PATCH_FORMAT_VERSION.to_string(),
+        id,
+        author: author.to_string(),
+        created_at,
+        description: description.to_string(),
+        target_file: target_file.clone(),
+        language: profile.name.to_string(),
+        encoding,
+        kind: PatchKind::Delete,
+        old_path: None,
+        verify_tokens: Some(significant_token_texts(&before_text, profile)),
+        hunks: vec![],
+    };
+
+    Ok(GeneratedPatch {
+        target_file,
+        patch,
+        filename,
+    })
+}
+
+/// リネームから Rename パッチを生成する。
+/// 内容が実質同一（significant token 一致）なら検証付き移動のみの純リネーム、
+/// 差分があれば移動 + ハンク適用のパッチになる。
+fn build_rename_patch(
+    repo: &Repository,
+    parent_tree: Option<&git2::Tree>,
+    commit_tree: &git2::Tree,
+    old_git_path: &str,
+    new_git_path: &str,
+    author: &str,
+    description: &str,
+    config: &ContextConfig,
+) -> Result<GeneratedPatch, String> {
+    let old_git_path = old_git_path.replace('\\', "/");
+    let new_git_path = new_git_path.replace('\\', "/");
+    let old_rel = to_work_dir_relative_lenient(&old_git_path)?;
+    let target_file = to_work_dir_relative_lenient(&new_git_path)?;
+
+    let parent = parent_tree
+        .ok_or_else(|| "親コミットがないためリネーム元の内容を取得できません".to_string())?;
+    let before_bytes = read_blob_from_tree(repo, parent, &old_git_path)
+        .unwrap_or(None)
+        .ok_or_else(|| "リネーム前のファイル内容が取得できません".to_string())?;
+    let after_bytes = read_blob_from_tree(repo, commit_tree, &new_git_path)
+        .unwrap_or(None)
+        .ok_or_else(|| "リネーム後のファイル内容が取得できません".to_string())?;
+
+    if is_binary_content(Some(&before_bytes)) || is_binary_content(Some(&after_bytes)) {
+        return Err("バイナリファイルはスキップ".to_string());
+    }
+
+    let (before_text, _) = decode_bytes(&before_bytes);
+    let (after_text, encoding) = decode_bytes(&after_bytes);
+    let profile = detect_profile(Path::new(&target_file));
+
+    let before_sig = significant_token_texts(&before_text, profile);
+    let content_patch = if before_sig == significant_token_texts(&after_text, profile) {
+        None
+    } else {
+        match generate_patch(
+            &before_text,
+            &after_text,
+            profile,
+            author,
+            description,
+            &target_file,
+            &encoding,
+            config,
+        ) {
+            Ok(p) => Some(p),
+            // 空白のみの差は diff が出ないため純リネームとして扱う
+            Err(GeneratorError::NoDiff) => None,
+            Err(e) => return Err(generator_error_reason(e)),
+        }
+    };
+
+    let mut patch = match content_patch {
+        Some(p) => p,
+        None => {
+            let (id, created_at) = generate_patch_id(description);
+            PatchFile {
+                version: PATCH_FORMAT_VERSION.to_string(),
+                id,
+                author: author.to_string(),
+                created_at,
+                description: description.to_string(),
+                target_file: target_file.clone(),
+                language: profile.name.to_string(),
+                encoding,
+                kind: PatchKind::Rename,
+                old_path: None,
+                verify_tokens: Some(before_sig),
+                hunks: vec![],
+            }
+        }
+    };
+    patch.kind = PatchKind::Rename;
+    patch.old_path = Some(old_rel);
+
+    // リネームはハンク分割しない（分割すると 2 個目以降の適用時に旧ファイルが既に無く破綻する）
+    let filename = format!("{}.dpatch", patch.id);
+    Ok(GeneratedPatch {
+        target_file,
+        patch,
+        filename,
+    })
+}
+
+fn generator_error_reason(e: GeneratorError) -> String {
+    match e {
+        GeneratorError::NoDiff => "変更が見つかりませんでした".to_string(),
+        GeneratorError::NoMatch { hunk_index } => {
+            format!("ハンク {} の適用箇所が見つかりませんでした", hunk_index)
+        }
+    }
 }
 
 struct SplitPatch {
@@ -327,12 +504,19 @@ fn commit_diff<'repo>(
     commit: &git2::Commit,
 ) -> Result<Diff<'repo>, GitError> {
     let commit_tree = commit.tree()?;
-    if commit.parent_count() > 0 {
+    let mut diff = if commit.parent_count() > 0 {
         let parent_tree = commit.parent(0)?.tree()?;
-        Ok(repo.diff_tree_to_tree(Some(&parent_tree), Some(&commit_tree), None)?)
+        repo.diff_tree_to_tree(Some(&parent_tree), Some(&commit_tree), None)?
     } else {
-        Ok(repo.diff_tree_to_tree(None, Some(&commit_tree), None)?)
-    }
+        repo.diff_tree_to_tree(None, Some(&commit_tree), None)?
+    };
+
+    // リネームを Delete+Add の 2 デルタではなく 1 つの Renamed デルタとして検出する
+    let mut find_opts = git2::DiffFindOptions::new();
+    find_opts.renames(true);
+    diff.find_similar(Some(&mut find_opts))?;
+
+    Ok(diff)
 }
 
 fn commit_to_info(commit: &git2::Commit) -> CommitInfo {
@@ -387,7 +571,21 @@ fn delta_to_changed_file(delta: &git2::DiffDelta) -> Option<ChangedFile> {
         .and_then(|p| p.to_str())
         .map(|s| s.replace('\\', "/"))?;
 
-    Some(ChangedFile { path, status })
+    let old_path = if status == FileChangeStatus::Renamed {
+        delta
+            .old_file()
+            .path()
+            .and_then(|p| p.to_str())
+            .map(|s| s.replace('\\', "/"))
+    } else {
+        None
+    };
+
+    Some(ChangedFile {
+        path,
+        status,
+        old_path,
+    })
 }
 
 fn read_blob_from_tree(
@@ -417,6 +615,20 @@ fn is_binary_content(bytes: Option<&[u8]>) -> bool {
 
 fn canonicalize_or_self(path: &Path) -> Result<PathBuf, GitError> {
     std::fs::canonicalize(path).or_else(|_| Ok(path.to_path_buf()))
+}
+
+/// 実在チェックなしの work_dir 相対パス解決。
+/// 削除・新規作成・リネームでは work_dir に現物が存在しない場合があるため字句的に解決する。
+/// `..` セグメントは work_dir 外への破壊的操作（削除・書込）を防ぐため拒否する。
+fn to_work_dir_relative_lenient(git_path: &str) -> Result<String, String> {
+    let normalized = git_path.replace('\\', "/");
+    if normalized.is_empty() {
+        return Err("パスが空です".to_string());
+    }
+    if normalized.split('/').any(|seg| seg == "..") {
+        return Err(format!("不正なパス（work_dir 外参照）: {}", git_path));
+    }
+    Ok(normalized)
 }
 
 /// Git リポジトリルート相対パスを work_dir 相対パス（/ 区切り）に変換する。
@@ -484,6 +696,9 @@ mod tests {
         index
             .add_all(["*"].iter(), IndexAddOption::DEFAULT, None)
             .unwrap();
+        // add_all はワーキングツリーから消えたファイルを index から除去しないため、
+        // 削除・リネームを反映するには update_all も必要
+        index.update_all(["*"].iter(), None).unwrap();
         index.write().unwrap();
         let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
@@ -517,6 +732,9 @@ mod tests {
             target_file: "src/Foo.java".to_string(),
             language: "java".to_string(),
             encoding: "UTF-8".to_string(),
+            kind: PatchKind::Modify,
+            old_path: None,
+            verify_tokens: None,
             hunks: vec![DiffHunk {
                 context_before: vec![],
                 removed: vec![],
@@ -542,6 +760,9 @@ mod tests {
             target_file: "src/Foo.java".to_string(),
             language: "java".to_string(),
             encoding: "UTF-8".to_string(),
+            kind: PatchKind::Modify,
+            old_path: None,
+            verify_tokens: None,
             hunks: vec![
                 DiffHunk {
                     context_before: vec![],
@@ -604,8 +825,128 @@ mod tests {
             .collect();
         assert_eq!(baz_patches.len(), 1);
         assert_eq!(baz_patches[0].patch.hunks.len(), 1);
+        // 新規追加ファイルは Create パッチになること
+        assert_eq!(baz_patches[0].patch.kind, PatchKind::Create);
 
         let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_generate_delete_patch_from_commit() {
+        let tmp = std::env::temp_dir().join(format!("driftpatch_git_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let repo = Repository::init(&tmp).unwrap();
+
+        let content = "class Legacy {\n    void a() {}\n}\n";
+        let file = tmp.join("src").join("Legacy.java");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, content).unwrap();
+        commit_all(&repo, "initial");
+
+        fs::remove_file(&file).unwrap();
+        let oid = commit_all(&repo, "remove legacy");
+
+        let result = generate_patches_from_commit(
+            &tmp,
+            &oid.to_string(),
+            &tmp,
+            "tester",
+            Some("delete test"),
+            &ContextConfig::default(),
+        )
+        .unwrap();
+
+        // スキップではなく Delete パッチとして生成されること
+        assert!(result.skipped.is_empty(), "skipped: {:?}", result.skipped);
+        assert_eq!(result.generated.len(), 1);
+        let item = &result.generated[0];
+        assert_eq!(item.target_file, "src/Legacy.java");
+        assert_eq!(item.patch.kind, PatchKind::Delete);
+        assert!(item.patch.hunks.is_empty());
+        let tokens = item.patch.verify_tokens.as_ref().unwrap();
+        assert!(tokens.iter().any(|t| t == "Legacy"));
+        assert!(item.patch.validate().is_ok());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_rename_detected_with_find_similar() {
+        let tmp = std::env::temp_dir().join(format!("driftpatch_git_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let repo = Repository::init(&tmp).unwrap();
+
+        let content = "class Moved {\n    void a() {}\n    void b() {}\n}\n";
+        let old_file = tmp.join("src").join("OldName.java");
+        fs::create_dir_all(old_file.parent().unwrap()).unwrap();
+        fs::write(&old_file, content).unwrap();
+        commit_all(&repo, "initial");
+
+        // 内容変更なしの純リネーム
+        fs::rename(&old_file, tmp.join("src").join("NewName.java")).unwrap();
+        let oid = commit_all(&repo, "rename");
+
+        let result = generate_patches_from_commit(
+            &tmp,
+            &oid.to_string(),
+            &tmp,
+            "tester",
+            Some("rename test"),
+            &ContextConfig::default(),
+        )
+        .unwrap();
+
+        // Delete+Create の 2 パッチではなく 1 つの Rename パッチになること
+        assert_eq!(result.generated.len(), 1, "generated: {:?}", result.generated);
+        let item = &result.generated[0];
+        assert_eq!(item.patch.kind, PatchKind::Rename);
+        assert_eq!(item.target_file, "src/NewName.java");
+        assert_eq!(item.patch.old_path.as_deref(), Some("src/OldName.java"));
+        assert!(item.patch.hunks.is_empty(), "純リネームはハンクなし");
+        assert!(item.patch.verify_tokens.is_some());
+        assert!(item.patch.validate().is_ok());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_rename_with_edit_generates_hunks_not_split() {
+        let tmp = std::env::temp_dir().join(format!("driftpatch_git_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let repo = Repository::init(&tmp).unwrap();
+
+        let before = "class Refactored {\n    void a() {}\n    void b() {}\n    void c() {}\n}\n";
+        let old_file = tmp.join("src").join("BeforeEdit.java");
+        fs::create_dir_all(old_file.parent().unwrap()).unwrap();
+        fs::write(&old_file, before).unwrap();
+        commit_all(&repo, "initial");
+
+        // リネーム + 軽微な編集（類似度は保たれる）
+        fs::remove_file(&old_file).unwrap();
+        let after = "class Refactored {\n    void a() { System.out.println(1); }\n    void b() {}\n    void c() {}\n}\n";
+        fs::write(tmp.join("src").join("AfterEdit.java"), after).unwrap();
+        let oid = commit_all(&repo, "rename with edit");
+
+        let result = generate_patches_from_commit(
+            &tmp,
+            &oid.to_string(),
+            &tmp,
+            "tester",
+            Some("rename edit test"),
+            &ContextConfig::default(),
+        )
+        .unwrap();
+
+        assert_eq!(result.generated.len(), 1, "generated: {:?}", result.generated);
+        let item = &result.generated[0];
+        assert_eq!(item.patch.kind, PatchKind::Rename);
+        assert_eq!(item.patch.old_path.as_deref(), Some("src/BeforeEdit.java"));
+        assert!(!item.patch.hunks.is_empty(), "編集ありリネームはハンクを持つこと");
+        // -h 分割されないこと
+        assert!(!item.filename.contains("-h"), "filename: {}", item.filename);
+        assert!(item.patch.validate().is_ok());
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]

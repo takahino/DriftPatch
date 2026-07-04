@@ -120,6 +120,7 @@ driftpatch-batch apply \
 | `--workdir` | 修正対象ファイルを含むワークディレクトリ |
 | `--patch-dir` | `.dpatch` が格納されたディレクトリ（通常は `patches/` またはリポジトリルート） |
 | `--report-dir` | Excel / HTML レポートの出力先 |
+| `--dry-run` | ファイルを一切変更せず、各パッチの予定操作（変更 / 作成 / 削除 / リネーム）と適用可否のみレポートする |
 
 ### レポート
 
@@ -163,6 +164,8 @@ driftpatch-batch from-commit \
 | `--report-dir` | レポート出力先（任意） |
 
 同一ファイル内の複数箇所修正はハンク単位で別 `.dpatch` に分割される。
+
+コミット内の全変更種別がパッチ化される: 変更は `modify`、新規追加は `create`、削除は `delete`（削除時点の significant token 列を `verify_tokens` として記録）、リネームは検出されて `rename` パッチになる。適用時、`delete` / 純粋な `rename` パッチは現物の内容が `verify_tokens` と一致する場合のみ削除・移動を行う（空白・インデント差は無視）。ドリフトしたファイルは変更されず、失敗としてレポートされる。
 
 ## パッチリポジトリの構成
 
