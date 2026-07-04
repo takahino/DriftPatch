@@ -410,4 +410,23 @@ pub static CATALOG: &[(&str, &str)] = &[
     ("gui.col_original", "修正前（読取専用）"),
     ("gui.col_editable", "修正画面（編集可）"),
     ("gui.col_preview", "パッチ適用プレビュー"),
+    ("gui.btn_batch", "📦 一括適用"),
+    ("gui.win_batch", "一括適用 / 競合チェック"),
+    ("gui.batch_patch_dir", "パッチディレクトリ:"),
+    ("gui.batch_report_dir", "レポートディレクトリ:"),
+    ("gui.batch_dry_run", "ドライラン（変更なし）:"),
+    ("gui.batch_btn_dry_run", "▶ ドライラン実行"),
+    ("gui.batch_btn_apply", "▶ 適用実行"),
+    ("gui.batch_btn_check", "🔍 競合チェック"),
+    (
+        "gui.batch_apply_warning",
+        "⚠ ドライランが無効です。実行するとファイルが変更されます。",
+    ),
+    ("gui.batch_apply_result", "適用結果"),
+    (
+        "gui.batch_apply_summary",
+        "合計: {total} / 成功: {success} / スキップ: {skipped} / 失敗: {failed}",
+    ),
+    ("gui.batch_check_result", "競合チェック結果"),
+    ("gui.batch_check_ok", "OK: 競合は検出されませんでした"),
 ];

@@ -1,3 +1,4 @@
+mod batch_window;
 pub mod diff_editor;
 mod editors;
 mod git_import_window;
@@ -16,6 +17,9 @@ pub fn render(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
 
     // Git コミット取り込みダイアログ
     git_import_window::render_git_import_window(app, &ctx);
+
+    // 一括適用・競合チェックダイアログ
+    batch_window::render_batch_window(app, &ctx);
 
     // ツールバー（上部パネル）
     egui::Panel::top("toolbar").resizable(false).show(ui, |ui| {

@@ -90,6 +90,17 @@ flowchart LR
 4. Optionally override the description, then click **Generate**.
 5. A `.dpatch` is created for every changed file in the commit. Multiple edits in the same file are split into separate patch files per hunk (`-h1`, `-h2`, etc.).
 
+### Batch apply / conflict check from the GUI
+
+Click **Batch apply** in the toolbar to run the same operations as `driftpatch-batch` without leaving the GUI:
+
+1. Confirm or edit **Work directory**, **Patch directory**, and **Report directory** (pre-filled from Settings).
+2. Leave **Dry run** checked to preview what each patch would do without changing any file, or uncheck it to apply for real (a warning banner appears when dry run is disabled).
+3. Click **Run dry-run** / **Apply** to execute; results (summary counts and per-patch status) are shown below, along with the generated Excel/HTML report paths.
+4. Click **Check conflicts** to run the same conflict check as `driftpatch-batch check` against the configured patch directory.
+
+A real (non-dry-run) apply reloads the patch list and, if a file is currently open, re-reads it from disk so the editor reflects the applied changes.
+
 ### Three-column layout
 
 | Column | Label | Purpose |

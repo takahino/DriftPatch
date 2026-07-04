@@ -1,5 +1,9 @@
 use std::path::{Path, PathBuf};
 
+use driftpatch::batch::{
+    apply_all, check_patches, BatchApplyConfig, BatchApplyOutcome, PatchCheckConfig,
+    PatchCheckOutcome,
+};
 use driftpatch::encoding::read_file_auto;
 use driftpatch::git_import::{generate_patches_from_commit, list_commits, CommitInfo};
 use driftpatch::i18n::{self, tr, tr_args};
@@ -111,6 +115,17 @@ pub struct GeneratePatchDialog {
     pub warning: Option<String>,
 }
 
+/// GUI からの一括適用・競合チェックダイアログの状態
+pub struct BatchDialog {
+    pub work_dir: String,
+    pub patch_dir: String,
+    pub report_dir: String,
+    pub dry_run: bool,
+    pub apply_outcome: Option<BatchApplyOutcome>,
+    pub check_outcome: Option<PatchCheckOutcome>,
+    pub error: Option<String>,
+}
+
 /// アプリケーション全体の状態
 pub struct DriftPatchApp {
     /// 左列: 元テキスト（読取専用）
@@ -141,6 +156,8 @@ pub struct DriftPatchApp {
     pub generate_patch_dialog: Option<GeneratePatchDialog>,
     /// Git コミット取り込みダイアログ
     pub git_import_dialog: Option<GitImportDialog>,
+    /// 一括適用・競合チェックダイアログ
+    pub batch_dialog: Option<BatchDialog>,
 }
 
 impl Default for DriftPatchApp {
@@ -165,6 +182,7 @@ impl Default for DriftPatchApp {
             show_settings: false,
             generate_patch_dialog: None,
             git_import_dialog: None,
+            batch_dialog: None,
         }
     }
 }
@@ -703,6 +721,99 @@ impl DriftPatchApp {
         }
     }
 
+    /// 一括適用・競合チェックダイアログを開く（settings から初期値を埋める）
+    pub fn open_batch_dialog(&mut self) {
+        let patch_repo = self.settings.patch_repo_path.trim();
+        let patch_dir = if patch_repo.is_empty() {
+            String::new()
+        } else {
+            std::path::Path::new(patch_repo)
+                .join("patches")
+                .to_string_lossy()
+                .into_owned()
+        };
+        let report_dir = if patch_repo.is_empty() {
+            String::new()
+        } else {
+            std::path::Path::new(patch_repo)
+                .join("reports")
+                .to_string_lossy()
+                .into_owned()
+        };
+
+        self.batch_dialog = Some(BatchDialog {
+            work_dir: self.settings.work_dir.clone(),
+            patch_dir,
+            report_dir,
+            dry_run: true,
+            apply_outcome: None,
+            check_outcome: None,
+            error: None,
+        });
+    }
+
+    /// ダイアログの設定値でバッチ適用を実行する（同期・ブロッキング）
+    pub fn run_batch_apply(&mut self) {
+        let Some(dialog) = self.batch_dialog.as_ref() else {
+            return;
+        };
+        let config = BatchApplyConfig {
+            work_dir: PathBuf::from(dialog.work_dir.trim()),
+            patch_dir: PathBuf::from(dialog.patch_dir.trim()),
+            report_dir: PathBuf::from(dialog.report_dir.trim()),
+            dry_run: dialog.dry_run,
+        };
+
+        match apply_all(&config) {
+            Ok(outcome) => {
+                if let Some(ref mut dialog) = self.batch_dialog {
+                    dialog.apply_outcome = Some(outcome);
+                    dialog.error = None;
+                }
+                // 実適用が成功した場合、パッチ一覧・開いているファイルを追従させる
+                if !config.dry_run {
+                    self.reload_patches();
+                    if let Some(path) = self.file_path.clone() {
+                        if path.exists() {
+                            self.open_file(path);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                if let Some(ref mut dialog) = self.batch_dialog {
+                    dialog.apply_outcome = None;
+                    dialog.error = Some(e);
+                }
+            }
+        }
+    }
+
+    /// ダイアログの設定値で競合チェックを実行する
+    pub fn run_patch_check(&mut self) {
+        let Some(dialog) = self.batch_dialog.as_ref() else {
+            return;
+        };
+        let config = PatchCheckConfig {
+            patch_dir: PathBuf::from(dialog.patch_dir.trim()),
+        };
+
+        match check_patches(&config) {
+            Ok(outcome) => {
+                if let Some(ref mut dialog) = self.batch_dialog {
+                    dialog.check_outcome = Some(outcome);
+                    dialog.error = None;
+                }
+            }
+            Err(e) => {
+                if let Some(ref mut dialog) = self.batch_dialog {
+                    dialog.check_outcome = None;
+                    dialog.error = Some(e);
+                }
+            }
+        }
+    }
+
     /// 選択中のパッチを削除する
     pub fn delete_selected_patch(&mut self) {
         let Some(ref patch_path) = self.selected_patch.clone() else {
@@ -1006,6 +1117,125 @@ mod tests {
         );
 
         assert_eq!(app.original_text, on_disk);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_run_batch_apply_dry_run_reports_success() {
+        use driftpatch::patch::context::ContextConfig;
+        use driftpatch::patch::generator::generate_patch;
+        use driftpatch::patch::repository::PatchRepository;
+
+        let tmp =
+            std::env::temp_dir().join(format!("driftpatch_gui_batch_{}", uuid::Uuid::new_v4()));
+        let work_dir = tmp.join("work");
+        let patch_repo = tmp.join("repo");
+        let report_dir = tmp.join("reports");
+        std::fs::create_dir_all(&work_dir).unwrap();
+
+        let orig = "void foo() {\n    return null;\n}\n";
+        let edit = "void foo() {\n    Objects.requireNonNull(bar);\n    return null;\n}\n";
+        std::fs::write(work_dir.join("Foo.java"), orig).unwrap();
+
+        let patch = generate_patch(
+            orig,
+            edit,
+            &driftpatch::lexer::profiles::JAVA,
+            "tester",
+            "test",
+            "Foo.java",
+            "UTF-8",
+            &ContextConfig::default(),
+        )
+        .unwrap();
+        let repo = PatchRepository::new(&patch_repo);
+        repo.save(&patch, "20260704-test.dpatch").unwrap();
+
+        let mut app = DriftPatchApp::default();
+        app.batch_dialog = Some(BatchDialog {
+            work_dir: work_dir.to_string_lossy().into_owned(),
+            patch_dir: repo.patches_dir().to_string_lossy().into_owned(),
+            report_dir: report_dir.to_string_lossy().into_owned(),
+            dry_run: true,
+            apply_outcome: None,
+            check_outcome: None,
+            error: None,
+        });
+
+        app.run_batch_apply();
+
+        let dialog = app.batch_dialog.as_ref().unwrap();
+        assert!(dialog.error.is_none(), "error: {:?}", dialog.error);
+        let outcome = dialog.apply_outcome.as_ref().expect("apply_outcome");
+        assert_eq!(outcome.report.summary.total, 1);
+        assert_eq!(outcome.report.summary.success, 1);
+        // dry-run なのでディスクは無変更
+        assert_eq!(
+            std::fs::read_to_string(work_dir.join("Foo.java")).unwrap(),
+            orig
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_run_patch_check_detects_overlap() {
+        use driftpatch::patch::context::ContextConfig;
+        use driftpatch::patch::generator::generate_patch;
+        use driftpatch::patch::repository::PatchRepository;
+
+        let tmp =
+            std::env::temp_dir().join(format!("driftpatch_gui_check_{}", uuid::Uuid::new_v4()));
+        let patch_repo = tmp.join("repo");
+
+        // 同一箇所を別要件で書き換える2パッチ（重複ハンク）
+        let orig = "void foo() { return null; }\n";
+        let edit_a = "void foo() { return 0; }\n";
+        let edit_b = "void foo() { return 1; }\n";
+        let repo = PatchRepository::new(&patch_repo);
+        let patch_a = generate_patch(
+            orig,
+            edit_a,
+            &driftpatch::lexer::profiles::JAVA,
+            "tester",
+            "a",
+            "Foo.java",
+            "UTF-8",
+            &ContextConfig::default(),
+        )
+        .unwrap();
+        let patch_b = generate_patch(
+            orig,
+            edit_b,
+            &driftpatch::lexer::profiles::JAVA,
+            "tester",
+            "b",
+            "Foo.java",
+            "UTF-8",
+            &ContextConfig::default(),
+        )
+        .unwrap();
+        repo.save(&patch_a, "a.dpatch").unwrap();
+        repo.save(&patch_b, "b.dpatch").unwrap();
+
+        let mut app = DriftPatchApp::default();
+        app.batch_dialog = Some(BatchDialog {
+            work_dir: String::new(),
+            patch_dir: repo.patches_dir().to_string_lossy().into_owned(),
+            report_dir: String::new(),
+            dry_run: true,
+            apply_outcome: None,
+            check_outcome: None,
+            error: None,
+        });
+
+        app.run_patch_check();
+
+        let dialog = app.batch_dialog.as_ref().unwrap();
+        assert!(dialog.error.is_none(), "error: {:?}", dialog.error);
+        let outcome = dialog.check_outcome.as_ref().expect("check_outcome");
+        assert!(outcome.has_error(), "findings: {:?}", outcome.findings);
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

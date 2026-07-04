@@ -36,6 +36,13 @@ pub fn render_toolbar(app: &mut DriftPatchApp, ctx: &Context, ui: &mut egui::Ui)
 
         ui.separator();
 
+        // 一括適用・競合チェックダイアログ
+        if ui.button(tr("gui.btn_batch")).clicked() {
+            app.open_batch_dialog();
+        }
+
+        ui.separator();
+
         // 設定ボタン
         if ui.button(tr("gui.btn_settings")).clicked() {
             app.show_settings = !app.show_settings;

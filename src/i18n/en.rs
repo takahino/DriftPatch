@@ -400,4 +400,23 @@ pub static CATALOG: &[(&str, &str)] = &[
     ("gui.col_original", "Original (read-only)"),
     ("gui.col_editable", "Editable"),
     ("gui.col_preview", "Patch preview"),
+    ("gui.btn_batch", "📦 Batch apply"),
+    ("gui.win_batch", "Batch apply / Conflict check"),
+    ("gui.batch_patch_dir", "Patch directory:"),
+    ("gui.batch_report_dir", "Report directory:"),
+    ("gui.batch_dry_run", "Dry run (no changes):"),
+    ("gui.batch_btn_dry_run", "▶ Run dry-run"),
+    ("gui.batch_btn_apply", "▶ Apply"),
+    ("gui.batch_btn_check", "🔍 Check conflicts"),
+    (
+        "gui.batch_apply_warning",
+        "⚠ Dry run is disabled. Running this will modify files.",
+    ),
+    ("gui.batch_apply_result", "Apply result"),
+    (
+        "gui.batch_apply_summary",
+        "Total: {total} / Success: {success} / Skipped: {skipped} / Failed: {failed}",
+    ),
+    ("gui.batch_check_result", "Conflict check result"),
+    ("gui.batch_check_ok", "OK: no conflicts detected"),
 ];
