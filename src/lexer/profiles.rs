@@ -4,7 +4,8 @@ use std::path::Path;
 pub struct LanguageProfile {
     pub name: &'static str,
     pub extensions: &'static [&'static str],
-    pub line_comment: Option<&'static str>,
+    /// 行コメントの開始記号（複数指定可、例: properties の `#` と `!`）
+    pub line_comments: &'static [&'static str],
     pub block_comment: Option<(&'static str, &'static str)>,
     pub string_delimiters: &'static [char],
     /// Python の ''' / """ トリプルクォート対応
@@ -14,7 +15,7 @@ pub struct LanguageProfile {
 pub const JAVA: LanguageProfile = LanguageProfile {
     name: "java",
     extensions: &["java"],
-    line_comment: Some("//"),
+    line_comments: &["//"],
     block_comment: Some(("/*", "*/")),
     string_delimiters: &['"', '\''],
     triple_quote: false,
@@ -23,7 +24,7 @@ pub const JAVA: LanguageProfile = LanguageProfile {
 pub const PYTHON: LanguageProfile = LanguageProfile {
     name: "python",
     extensions: &["py"],
-    line_comment: Some("#"),
+    line_comments: &["#"],
     block_comment: None,
     string_delimiters: &['"', '\''],
     triple_quote: true,
@@ -32,7 +33,7 @@ pub const PYTHON: LanguageProfile = LanguageProfile {
 pub const CPP: LanguageProfile = LanguageProfile {
     name: "cpp",
     extensions: &["c", "cpp", "cc", "cxx", "h", "hpp", "hxx", "rc"],
-    line_comment: Some("//"),
+    line_comments: &["//"],
     block_comment: Some(("/*", "*/")),
     string_delimiters: &['"', '\''],
     triple_quote: false,
@@ -41,7 +42,7 @@ pub const CPP: LanguageProfile = LanguageProfile {
 pub const SQL: LanguageProfile = LanguageProfile {
     name: "sql",
     extensions: &["sql"],
-    line_comment: Some("--"),
+    line_comments: &["--"],
     block_comment: Some(("/*", "*/")),
     string_delimiters: &['\''],
     triple_quote: false,
@@ -50,7 +51,7 @@ pub const SQL: LanguageProfile = LanguageProfile {
 pub const JAVASCRIPT: LanguageProfile = LanguageProfile {
     name: "javascript",
     extensions: &["js", "ts", "jsx", "tsx", "mjs", "cjs"],
-    line_comment: Some("//"),
+    line_comments: &["//"],
     block_comment: Some(("/*", "*/")),
     string_delimiters: &['"', '\'', '`'],
     triple_quote: false,
@@ -59,7 +60,7 @@ pub const JAVASCRIPT: LanguageProfile = LanguageProfile {
 pub const RUST: LanguageProfile = LanguageProfile {
     name: "rust",
     extensions: &["rs"],
-    line_comment: Some("//"),
+    line_comments: &["//"],
     block_comment: Some(("/*", "*/")),
     string_delimiters: &['"', '\''],
     triple_quote: false,
@@ -68,7 +69,7 @@ pub const RUST: LanguageProfile = LanguageProfile {
 pub const CSHARP: LanguageProfile = LanguageProfile {
     name: "csharp",
     extensions: &["cs", "csx"],
-    line_comment: Some("//"),
+    line_comments: &["//"],
     block_comment: Some(("/*", "*/")),
     string_delimiters: &['"', '\''],
     triple_quote: false,
@@ -77,7 +78,7 @@ pub const CSHARP: LanguageProfile = LanguageProfile {
 pub const GO: LanguageProfile = LanguageProfile {
     name: "go",
     extensions: &["go"],
-    line_comment: Some("//"),
+    line_comments: &["//"],
     block_comment: Some(("/*", "*/")),
     string_delimiters: &['"', '\'', '`'],
     triple_quote: false,
@@ -86,7 +87,7 @@ pub const GO: LanguageProfile = LanguageProfile {
 pub const PLSQL: LanguageProfile = LanguageProfile {
     name: "plsql",
     extensions: &["pls", "pks", "pkb", "pck", "psc", "plsql"],
-    line_comment: Some("--"),
+    line_comments: &["--"],
     block_comment: Some(("/*", "*/")),
     string_delimiters: &['\''],
     triple_quote: false,
@@ -95,7 +96,7 @@ pub const PLSQL: LanguageProfile = LanguageProfile {
 pub const GENERIC: LanguageProfile = LanguageProfile {
     name: "generic",
     extensions: &[],
-    line_comment: Some("//"),
+    line_comments: &["//"],
     block_comment: Some(("/*", "*/")),
     string_delimiters: &['"', '\''],
     triple_quote: false,

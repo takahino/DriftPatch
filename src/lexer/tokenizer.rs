@@ -52,14 +52,14 @@ impl<'a> GenericTokenizer<'a> {
                 }
             }
 
-            // 行コメント
-            if let Some(lc) = self.profile.line_comment {
+            // 行コメント（複数の開始記号に対応。例: properties の `#` と `!`）
+            for &lc in self.profile.line_comments {
                 if starts_with_str(&chars, i, lc) {
                     let (tok, consumed) = self.read_line_comment(&chars, i, byte_pos);
                     byte_pos += tok.text.len();
                     tokens.push(tok);
                     i += consumed;
-                    continue;
+                    continue 'outer;
                 }
             }
 
