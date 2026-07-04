@@ -1,4 +1,5 @@
 use crate::app::DriftPatchApp;
+use crate::ui::diff_editor::{MAX_FONT_SIZE, MIN_FONT_SIZE};
 use driftpatch::i18n::{self, tr};
 
 /// 設定ウィンドウを描画する
@@ -99,6 +100,14 @@ pub fn render_settings_window(app: &mut DriftPatchApp, ctx: &egui::Context) {
                                 i18n::set_lang(i18n::Lang::En);
                             }
                         });
+                    ui.end_row();
+
+                    ui.label(tr("gui.set_font_size"));
+                    ui.add(
+                        egui::DragValue::new(&mut app.settings.font_size)
+                            .range(MIN_FONT_SIZE..=MAX_FONT_SIZE)
+                            .speed(0.5),
+                    );
                     ui.end_row();
                 });
 

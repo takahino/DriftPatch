@@ -393,6 +393,7 @@ pub static CATALOG: &[(&str, &str)] = &[
     ("gui.enabled", "有効"),
     ("gui.btn_save_close", "保存して閉じる"),
     ("gui.set_language", "言語 / Language:"),
+    ("gui.set_font_size", "フォントサイズ:"),
     ("gui.win_git_import", "Git コミットからパッチ生成"),
     (
         "gui.git_select_hint",

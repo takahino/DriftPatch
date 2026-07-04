@@ -1,4 +1,4 @@
-mod diff_editor;
+pub mod diff_editor;
 mod editors;
 mod git_import_window;
 mod patch_panel;

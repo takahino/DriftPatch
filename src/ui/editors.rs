@@ -45,6 +45,7 @@ pub fn render_editors(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
                             &removed_ranges,
                             REMOVED_COLOR,
                             false,
+                            app.settings.font_size,
                         );
                     });
             });
@@ -69,6 +70,7 @@ pub fn render_editors(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
                                 &added_ranges,
                                 ADDED_COLOR,
                                 true,
+                                app.settings.font_size,
                             );
                         });
                 app.scroll_offset = scroll_resp.state.offset.y;
@@ -95,6 +97,7 @@ pub fn render_editors(app: &mut DriftPatchApp, ui: &mut egui::Ui) {
                             &preview_ranges,
                             ADDED_COLOR,
                             false,
+                            app.settings.font_size,
                         );
                     });
             });

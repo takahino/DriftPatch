@@ -32,6 +32,9 @@ pub struct Settings {
     /// UI 言語（"ja" / "en"）
     #[serde(default = "default_ui_language")]
     pub ui_language: String,
+    /// エディタ3列のフォントサイズ
+    #[serde(default = "default_font_size")]
+    pub font_size: f32,
 }
 
 fn default_create_backup() -> bool {
@@ -40,6 +43,10 @@ fn default_create_backup() -> bool {
 
 fn default_ui_language() -> String {
     "ja".to_string()
+}
+
+fn default_font_size() -> f32 {
+    crate::ui::diff_editor::DEFAULT_FONT_SIZE
 }
 
 impl Default for Settings {
@@ -51,6 +58,7 @@ impl Default for Settings {
             git_repo_path: String::new(),
             create_backup: default_create_backup(),
             ui_language: default_ui_language(),
+            font_size: default_font_size(),
         }
     }
 }
