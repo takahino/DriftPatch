@@ -10,7 +10,14 @@ pub const DEFAULT_FONT_SIZE: f32 = 13.0;
 
 const ROWS: usize = 40;
 
+/// 検索マッチのハイライト色（通常）
+const SEARCH_MATCH_COLOR: Color32 = Color32::from_rgb(90, 80, 0);
+/// 検索マッチのハイライト色（カレント）
+const SEARCH_CURRENT_COLOR: Color32 = Color32::from_rgb(200, 120, 0);
+
 /// 差分ハイライト付きコードエディタを表示する。
+/// `search_ranges` / `current_match` は検索ヒットのハイライト（左右の読取専用列では
+/// 空スライス・`None` を渡せばよい）。検索ハイライトは差分ハイライトより優先される。
 #[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
@@ -22,6 +29,8 @@ pub fn show(
     highlight_color: Color32,
     editable: bool,
     font_size: f32,
+    search_ranges: &[(usize, usize)],
+    current_match: Option<(usize, usize)>,
 ) {
     let frame = egui::Frame::new().fill(theme.bg());
     frame.show(ui, |ui| {
@@ -40,6 +49,8 @@ pub fn show(
                                 highlight_ranges,
                                 highlight_color,
                                 font_size,
+                                search_ranges,
+                                current_match,
                             );
                             ui.fonts_mut(|f| f.layout_job(layout_job))
                         };
@@ -61,6 +72,7 @@ pub fn show(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_layout_job(
     text: &str,
     syntax: &Syntax,
@@ -68,10 +80,24 @@ fn build_layout_job(
     highlight_ranges: &[(usize, usize)],
     highlight_color: Color32,
     font_size: f32,
+    search_ranges: &[(usize, usize)],
+    current_match: Option<(usize, usize)>,
 ) -> LayoutJob {
     let mut job = LayoutJob::default();
     let mut lexer = Token::default();
     let mut byte_offset = 0usize;
+
+    let search_highlight = |start: usize, end: usize| -> Option<Color32> {
+        if let Some(cm) = current_match {
+            if overlaps_range(start, end, std::slice::from_ref(&cm)) {
+                return Some(SEARCH_CURRENT_COLOR);
+            }
+        }
+        if overlaps_range(start, end, search_ranges) {
+            return Some(SEARCH_MATCH_COLOR);
+        }
+        None
+    };
 
     for token in lexer.tokens(syntax, text) {
         let buf = token.buffer();
@@ -87,6 +113,9 @@ fn build_layout_job(
         if overlaps_range(start, end, highlight_ranges) {
             format.background = highlight_color;
         }
+        if let Some(color) = search_highlight(start, end) {
+            format.background = color;
+        }
         job.append(buf, 0.0, format);
     }
 
@@ -96,6 +125,9 @@ fn build_layout_job(
         let mut format = format_token(theme, font_size, TokenType::Unknown);
         if overlaps_range(byte_offset, text.len(), highlight_ranges) {
             format.background = highlight_color;
+        }
+        if let Some(color) = search_highlight(byte_offset, text.len()) {
+            format.background = color;
         }
         job.append(remainder, 0.0, format);
     }

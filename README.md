@@ -115,6 +115,19 @@ The left and right columns scroll in sync with the center column.
 
 The bottom panel lists patches whose `target_file` matches the currently open file. Use **Refresh** to reload from disk.
 
+### Search in the editor
+
+Press **Ctrl+F** (⌘F on macOS) while the center column has focus to open the search bar. Type to search the editable text; matches are highlighted (current match in orange, others in yellow) and the left/right columns scroll in sync since they follow the center column's scroll position.
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+F` | Open search |
+| `Enter` / `F3` | Jump to next match |
+| `Shift+Enter` / `Shift+F3` | Jump to previous match |
+| `Esc` | Close search |
+
+The "Aa" checkbox toggles case sensitivity (case-insensitive matching is ASCII-only).
+
 ## Batch CLI Usage
 
 `driftpatch-batch` applies every `.dpatch` file under `--patch-dir` to files in `--workdir`.

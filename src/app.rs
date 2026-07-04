@@ -115,6 +115,60 @@ pub struct GeneratePatchDialog {
     pub warning: Option<String>,
 }
 
+/// エディタ内検索（Ctrl+F）の状態
+#[derive(Debug, Default)]
+pub struct SearchState {
+    pub open: bool,
+    pub query: String,
+    pub case_sensitive: bool,
+    /// edited_text 上のバイト範囲 [start, end) の一覧
+    pub matches: Vec<(usize, usize)>,
+    pub current: usize,
+    /// ジャンプ要求（1フレーム限りで中央列 ScrollArea に注入される）
+    pub scroll_target: Option<f32>,
+    pub focus_requested: bool,
+}
+
+/// `text` から `query` にマッチするバイト範囲を全て返す（大文字小文字の区別は ASCII のみ）
+pub fn find_matches(text: &str, query: &str, case_sensitive: bool) -> Vec<(usize, usize)> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let text_bytes = text.as_bytes();
+    let query_bytes = query.as_bytes();
+    let qlen = query_bytes.len();
+    if qlen > text_bytes.len() {
+        return Vec::new();
+    }
+
+    let mut matches = Vec::new();
+    let mut i = 0;
+    while i + qlen <= text_bytes.len() {
+        let window = &text_bytes[i..i + qlen];
+        let is_match = if case_sensitive {
+            window == query_bytes
+        } else {
+            window.eq_ignore_ascii_case(query_bytes)
+        };
+        if is_match {
+            matches.push((i, i + qlen));
+            i += qlen;
+        } else {
+            i += 1;
+        }
+    }
+    matches
+}
+
+/// `byte_pos` が何行目（0-indexed）にあるかを返す
+pub fn line_of_byte(text: &str, byte_pos: usize) -> usize {
+    let pos = byte_pos.min(text.len());
+    text.as_bytes()[..pos]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count()
+}
+
 /// GUI からの一括適用・競合チェックダイアログの状態
 pub struct BatchDialog {
     pub work_dir: String,
@@ -158,6 +212,8 @@ pub struct DriftPatchApp {
     pub git_import_dialog: Option<GitImportDialog>,
     /// 一括適用・競合チェックダイアログ
     pub batch_dialog: Option<BatchDialog>,
+    /// エディタ内検索の状態
+    pub search: SearchState,
 }
 
 impl Default for DriftPatchApp {
@@ -183,6 +239,7 @@ impl Default for DriftPatchApp {
             generate_patch_dialog: None,
             git_import_dialog: None,
             batch_dialog: None,
+            search: SearchState::default(),
         }
     }
 }
@@ -1119,6 +1176,53 @@ mod tests {
         assert_eq!(app.original_text, on_disk);
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_find_matches_no_hits() {
+        assert_eq!(find_matches("hello world", "xyz", true), Vec::new());
+    }
+
+    #[test]
+    fn test_find_matches_multiple_hits() {
+        let matches = find_matches("foo bar foo baz foo", "foo", true);
+        assert_eq!(matches, vec![(0, 3), (8, 11), (16, 19)]);
+    }
+
+    #[test]
+    fn test_find_matches_case_insensitive() {
+        let matches = find_matches("Foo foo FOO", "foo", false);
+        assert_eq!(matches.len(), 3);
+    }
+
+    #[test]
+    fn test_find_matches_case_sensitive_excludes_different_case() {
+        let matches = find_matches("Foo foo FOO", "foo", true);
+        assert_eq!(matches, vec![(4, 7)]);
+    }
+
+    #[test]
+    fn test_find_matches_empty_query_returns_empty() {
+        assert_eq!(find_matches("hello", "", true), Vec::new());
+    }
+
+    #[test]
+    fn test_find_matches_utf8_japanese() {
+        // "あいう" の中の "い" を検索（マルチバイト文字の境界を跨がないこと）
+        let text = "あいうあいう";
+        let matches = find_matches(text, "い", true);
+        assert_eq!(matches.len(), 2);
+        for &(s, e) in &matches {
+            assert_eq!(&text[s..e], "い");
+        }
+    }
+
+    #[test]
+    fn test_line_of_byte() {
+        let text = "line0\nline1\nline2\n";
+        assert_eq!(line_of_byte(text, 0), 0);
+        assert_eq!(line_of_byte(text, 6), 1); // "line1" の先頭
+        assert_eq!(line_of_byte(text, 12), 2); // "line2" の先頭
     }
 
     #[test]
